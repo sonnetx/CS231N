@@ -6,11 +6,15 @@ from transformers import ViTForImageClassification, ViTFeatureExtractor, Trainin
 import timm
 from datasets import load_dataset
 from torchvision import transforms
-from sklearn.metrics import accuracy_score, f1_score
+from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 import numpy as np
 import time
 import json
 import os
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import confusion_matrix
+
 try:
     import pynvml
     pynvml.nvmlInit()
@@ -59,12 +63,30 @@ class ISICDataset(Dataset):
         return {'pixel_values': pixel_values, 'labels': label}
 
 # Compute metrics for evaluation
-def compute_metrics(eval_pred):
+def compute_metrics(eval_pred, model_name, resolution):
     logits, labels = eval_pred
     predictions = np.argmax(logits, axis=-1)
     acc = accuracy_score(labels, predictions)
     f1 = f1_score(labels, predictions, average='weighted')
-    return {'accuracy': acc, 'f1': f1}
+    auc = roc_auc_score(labels, logits, multi_class='ovr')
+    
+    # Plot confusion matrix
+    conf_mat = confusion_matrix(labels, predictions)
+    fig, ax = plt.subplots(figsize=(10, 10))
+    sns.heatmap(conf_mat, annot=True, cmap='Blues')
+    ax.set_xlabel('Predicted labels')
+    ax.set_ylabel('True labels')
+    ax.set_title(f'{model_name}_{resolution}_conf_mat')
+    plt.savefig(f'{model_name}_{resolution}_conf_mat.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # Classification breakdown
+    unique, counts = np.unique(predictions, return_counts=True)
+    class_breakdown = dict(zip(unique, counts))
+    with open(f'{model_name}_{resolution}_class_breakdown.json', 'w') as f:
+        json.dump(class_breakdown, f)
+    
+    return {'accuracy': acc, 'f1': f1, 'auc': auc}
 
 # Measure GPU memory usage
 def get_gpu_memory(device_id=0):
@@ -166,7 +188,7 @@ def main():
                 args=training_args,
                 train_dataset=train_ds,
                 eval_dataset=val_ds,
-                compute_metrics=compute_metrics,
+                compute_metrics=lambda pred: compute_metrics(pred, model_name, resolution),
             )
             
             # Measure memory and time
