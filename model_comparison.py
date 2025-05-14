@@ -465,7 +465,7 @@ def main():
             )
 
     # Save results
-    with open("results_metrics_jpeg.json", "w") as f:
+    with open("results_metrics_finetune.json", "w") as f:
         json.dump(results, f, indent=4)
     with open("results_metrics_linear_probe.json", "w") as f:
         json.dump(results_linear_probe, f, indent=4)
