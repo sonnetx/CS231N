@@ -1,6 +1,7 @@
 '''
-This script fine-tunes a ViT model on the ISIC 2019 dataset with various resolutions.
-It includes data augmentation, model evaluation, and GPU memory monitoring.
+This script fine-tunes ViT, DINOv2, and SimCLR models on the ISIC 2019 dataset with various resolutions.
+It includes data augmentation with degradation (compress-decompress, blur, color quantization) to train robust models.
+DINOv2 is loaded from Hugging Face.
 '''
 
 import torch
@@ -20,6 +21,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import confusion_matrix
 import timm  # For SimCLR's ResNet backbone
+import random
+import io
 
 try:
     import pynvml
@@ -30,21 +33,88 @@ except ImportError:
     print("pynvml not installed, GPU memory monitoring disabled.")
 from thop import profile
 
+# Custom transform for degradation augmentations
+class DegradationTransform:
+    def __init__(self, p=0.5):
+        self.p = p  # Probability of applying each degradation
+
+    def __call__(self, img):
+        if not isinstance(img, Image.Image):
+            img = transforms.ToPILImage()(img)
+
+        # JPEG compression
+        if random.random() < self.p:
+            quality = random.randint(10, 50)
+            buffer = io.BytesIO()
+            img.save(buffer, format="JPEG", quality=quality)
+            buffer.seek(0)
+            img = Image.open(buffer)
+        
+        # Compress-decompress cycle (JPEG)
+        if random.random() < self.p:
+            quality = random.randint(10, 50)  # Random JPEG quality
+            buffer = io.BytesIO()
+            img.save(buffer, format="JPEG", quality=quality)
+            buffer.seek(0)
+            img = Image.open(buffer)
+        
+        # Gaussian blur
+        if random.random() < self.p:
+            kernel_size = random.choice([3, 5, 7])
+            sigma = random.uniform(0.1, 2.0)
+            img = transforms.GaussianBlur(kernel_size=kernel_size, sigma=sigma)(img)
+        
+        # Color quantization
+        if random.random() < self.p:
+            num_colors = random.randint(16, 64)
+            img = img.quantize(colors=num_colors, method=Image.Quantize.MAXCOVERAGE).convert('RGB')
+        
+        return img
+    
+class JPEGCompressionTransform:
+    """Applies JPEG compression at a specified quality level for validation."""
+
+    def __init__(self, quality):
+        self.quality = quality
+
+    def __call__(self, img):
+        if not isinstance(img, Image.Image):
+            img = transforms.ToPILImage()(img)
+        buffer = io.BytesIO()
+        img.save(buffer, format="JPEG", quality=self.quality)
+        buffer.seek(0)
+        return Image.open(buffer)
+
 # Custom Dataset for ISIC 2019 with Downsampling and Model-Specific Preprocessing
 class ISICDataset(Dataset):
-    def __init__(self, dataset, preprocessor, resolution=224, transform=None, model_type='vit'):
+    """
+    Custom dataset for ISIC 2019 with model-specific preprocessing and optional
+    JPEG compression.
+    """
+
+    def __init__(
+        self,
+        dataset,
+        preprocessor=None,
+        resolution=224,
+        transform=None,
+        model_type="vit",
+        jpeg_quality=None,
+    ):
         self.dataset = dataset
         self.preprocessor = preprocessor
         self.resolution = resolution
         self.transform = transform
         self.model_type = model_type
+        self.jpeg_quality = jpeg_quality
 
-        # SimCLR-specific preprocessing
-        if model_type == 'simclr':
+        if model_type == "simclr":
             self.preprocessor = transforms.Compose([
                 transforms.Resize((resolution, resolution)),
                 transforms.ToTensor(),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+                transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                ),
             ])
 
     def __len__(self):
@@ -52,54 +122,57 @@ class ISICDataset(Dataset):
 
     def __getitem__(self, idx):
         item = self.dataset[idx]
-        image = item['image']  # PIL Image
-        label = item['label']  # Integer label (0-7)
-        
-        # Downsample image
+        image = item["image"]
+        label = item["label"]
+
         if self.resolution != 224:
             image = image.resize((self.resolution, self.resolution), Image.LANCZOS)
-        
+
         if self.transform:
             image = self.transform(image)
-        
-        # Preprocess based on model type
-        if self.model_type in ['vit', 'dinov2']:
+
+        if self.jpeg_quality is not None:
+            image = JPEGCompressionTransform(self.jpeg_quality)(image)
+
+        if self.model_type in ["vit", "dinov2"]:
             encoding = self.preprocessor(images=image, return_tensors="pt")
-            pixel_values = encoding['pixel_values'].squeeze(0)
-        elif self.model_type == 'simclr':
+            pixel_values = encoding["pixel_values"].squeeze(0)
+        elif self.model_type == "simclr":
             pixel_values = self.preprocessor(image)
         else:
             raise ValueError(f"Unsupported model_type: {self.model_type}")
-        
+
         label = torch.tensor(label, dtype=torch.long)
-        
-        return {'pixel_values': pixel_values, 'labels': label}
+        return {"pixel_values": pixel_values, "labels": label}
 
 # Compute metrics for evaluation
-def compute_metrics(eval_pred, model_name, resolution):
+def compute_metrics(eval_pred, model_name, jpeg_quality):
+    """Computes evaluation metrics and saves confusion matrix and class breakdown."""
     logits, labels = eval_pred
     predictions = np.argmax(logits, axis=-1)
     acc = accuracy_score(labels, predictions)
-    f1 = f1_score(labels, predictions, average='weighted')
-    auc = roc_auc_score(labels, logits, multi_class='ovr')
-    
-    # Plot confusion matrix
+    f1 = f1_score(labels, predictions, average="weighted")
+    auc = roc_auc_score(labels, logits, multi_class="ovr")
+
+    # Save confusion matrix
     conf_mat = confusion_matrix(labels, predictions)
-    fig, ax = plt.subplots(figsize=(10, 10))
-    sns.heatmap(conf_mat, annot=True, cmap='Blues')
-    ax.set_xlabel('Predicted labels')
-    ax.set_ylabel('True labels')
-    ax.set_title(f'{model_name}_{resolution}_conf_mat')
-    plt.savefig(f'{model_name}_{resolution}_conf_mat.png', dpi=300, bbox_inches='tight')
+    plt.figure(figsize=(10, 10))
+    sns.heatmap(conf_mat, annot=True, cmap="Blues")
+    plt.xlabel("Predicted labels")
+    plt.ylabel("True labels")
+    plt.title(f"{model_name}_jpeg{jpeg_quality}_conf_mat")
+    plt.savefig(
+        f"{model_name}_jpeg{jpeg_quality}_conf_mat.png", dpi=300, bbox_inches="tight"
+    )
     plt.close()
-    
-    # Classification breakdown
+
+    # Save class breakdown
     unique, counts = np.unique(predictions, return_counts=True)
     class_breakdown = dict(zip(unique, counts))
-    with open(f'{model_name}_{resolution}_class_breakdown.json', 'w') as f:
+    with open(f"{model_name}_jpeg{jpeg_quality}_class_breakdown.json", "w") as f:
         json.dump(class_breakdown, f)
-    
-    return {'accuracy': acc, 'f1': f1, 'auc': auc}
+
+    return {"accuracy": acc, "f1": f1, "auc": auc}
 
 # Measure GPU memory usage
 def get_gpu_memory(device_id=0):
@@ -132,145 +205,169 @@ class SimCLRForClassification(nn.Module):
 
 # Main function for fine-tuning
 def main():
-    # Models and resolutions to compare
+    """Fine-tunes models and evaluates performance on JPEG-compressed validation
+    images.
+    """
     models = [
-        {'name': 'vit', 'model_id': 'google/vit-base-patch16-224', 'type': 'vit'},
-        {'name': 'dinov2', 'model_id': 'facebook/dinov2-base', 'type': 'dinov2'},  # Load from Hugging Face
-        {'name': 'simclr', 'model_id': 'resnet50', 'type': 'simclr'},  # ResNet-50 from timm
+        {"name": "vit", "model_id": "google/vit-base-patch16-224", "type": "vit"},
+        {"name": "dinov2", "model_id": "facebook/dinov2-base", "type": "dinov2"},
+        {"name": "simclr", "model_id": "resnet50", "type": "simclr"},
     ]
-    resolutions = [224, 112, 56]
-    
-    # Results storage
-    results = {model['name']: {} for model in models}
-    
+    jpeg_qualities = [90, 50, 20]  # High, medium, low quality
+    resolution = 224  # Fixed resolution
+
+    results = {model["name"]: {} for model in models}
+
     # Load dataset
     dataset = load_dataset("MKZuziak/ISIC_2019_224")
-    full_dataset = dataset['train'].train_test_split(test_size=0.2, stratify_by_column='label', seed=42)
-    train_dataset = full_dataset['train']
-    val_dataset = full_dataset['test']
-    
-    # Data augmentation
+    full_dataset = dataset["train"].train_test_split(
+        test_size=0.2, stratify_by_column="label", seed=42
+    )
+    train_dataset = full_dataset["train"]
+    val_dataset = full_dataset["test"]
+
+    # Define training augmentations
     transform = transforms.Compose([
         transforms.RandomHorizontalFlip(),
         transforms.RandomRotation(20),
         transforms.ColorJitter(brightness=0.2, contrast=0.2),
+        degradation_transform(p=0.5),
     ])
-    
+
     for model_info in models:
-        model_name = model_info['name']
-        model_id = model_info['model_id']
-        model_type = model_info['type']
+        model_name = model_info["name"]
+        model_id = model_info["model_id"]
+        model_type = model_info["type"]
         print(f"\nFine-tuning model: {model_name}")
-        
-        for resolution in resolutions:
-            print(f"Resolution: {resolution}x{resolution}")
-            
-            # Load preprocessor
-            if model_type == 'vit':
-                preprocessor = ViTFeatureExtractor.from_pretrained(model_id, size=resolution)
-            elif model_type == 'dinov2':
-                preprocessor = AutoImageProcessor.from_pretrained(model_id, size=resolution)
-            elif model_type == 'simclr':
-                preprocessor = None  # Handled in ISICDataset
-            else:
-                raise ValueError(f"Unsupported model_type: {model_type}")
-            
-            # Create datasets
-            train_ds = ISICDataset(train_dataset, preprocessor, resolution, transform, model_type)
-            val_ds = ISICDataset(val_dataset, preprocessor, resolution, model_type=model_type)
-            
-            # Load model
-            if model_type == 'vit':
-                model = ViTForImageClassification.from_pretrained(
-                    model_id,
-                    num_labels=8,
-                    ignore_mismatched_sizes=True
-                )
-            elif model_type == 'dinov2':
-                model = AutoModelForImageClassification.from_pretrained(
-                    model_id,
-                    num_labels=8,
-                    ignore_mismatched_sizes=True
-                )
-            elif model_type == 'simclr':
-                # Load ResNet-50 from timm (fallback if no SimCLR weights)
-                backbone = timm.create_model('resnet50', pretrained=True, num_classes=0)  # No classifier
-                model = SimCLRForClassification(backbone, num_classes=8)
-            else:
-                raise ValueError(f"Unsupported model_type: {model_type}")
-            
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            model.to(device)
-            
-            # Estimate FLOPs
-            input_tensor = torch.randn(1, 3, resolution, resolution)
-            try:
-                flops, _ = profile(model, inputs=(input_tensor,))
-                flops = flops / 1e9  # GFLOPs
-            except:
-                flops = -1  # Fallback if FLOPs estimation fails
-            
-            # Training arguments
-            training_args = TrainingArguments(
-                output_dir=f'./results_{model_name}_{resolution}',
-                num_train_epochs=3,
-                per_device_train_batch_size=16,
-                per_device_eval_batch_size=16,
-                warmup_steps=500,
-                weight_decay=0.01,
-                logging_dir=f'./logs_{model_name}_{resolution}',
-                logging_steps=10,
-                evaluation_strategy='epoch',
-                save_strategy='epoch',
-                load_best_model_at_end=True,
-                metric_for_best_model='accuracy',
+
+        # Load preprocessor
+        if model_type == "vit":
+            preprocessor = ViTFeatureExtractor.from_pretrained(model_id, size=resolution)
+        elif model_type == "dinov2":
+            preprocessor = AutoImageProcessor.from_pretrained(model_id, size=resolution)
+        elif model_type == "simclr":
+            preprocessor = None
+        else:
+            raise ValueError(f"Unsupported model_type: {model_type}")
+
+        # Create training dataset
+        train_ds = ISICDataset(
+            train_dataset,
+            preprocessor,
+            resolution,
+            transform,
+            model_type,
+            jpeg_quality=None,
+        )
+
+        # Load model
+        if model_type == "vit":
+            model = ViTForImageClassification.from_pretrained(
+                model_id, num_labels=8, ignore_mismatched_sizes=True
             )
-            
-            # Initialize Trainer
+        elif model_type == "dinov2":
+            model = AutoModelForImageClassification.from_pretrained(
+                model_id, num_labels=8, ignore_mismatched_sizes=True
+            )
+        elif model_type == "simclr":
+            backbone = timm.create_model("resnet50", pretrained=True, num_classes=0)
+            model = SimCLRForClassification(backbone, num_classes=8)
+        else:
+            raise ValueError(f"Unsupported model_type: {model_type}")
+
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model.to(device)
+
+        # Estimate FLOPs
+        input_tensor = torch.randn(1, 3, resolution, resolution).to(device)
+        try:
+            flops, _ = profile(model, inputs=(input_tensor,))
+            flops = flops / 1e9  # Convert to GFLOPs
+        except Exception:
+            flops = -1
+
+        # Define training arguments
+        training_args = TrainingArguments(
+            output_dir=f"./results_{model_name}",
+            num_train_epochs=3,
+            per_device_train_batch_size=16,
+            per_device_eval_batch_size=16,
+            warmup_steps=500,
+            weight_decay=0.01,
+            logging_dir=f"./logs_{model_name}",
+            logging_steps=10,
+            evaluation_strategy="epoch",
+            save_strategy="epoch",
+            load_best_model_at_end=True,
+            metric_for_best_model="accuracy",
+        )
+
+        for jpeg_quality in jpeg_qualities:
+            print(f"JPEG Quality: {jpeg_quality}")
+
+            # Create validation dataset with JPEG compression
+            val_ds = ISICDataset(
+                val_dataset,
+                preprocessor,
+                resolution,
+                model_type=model_type,
+                jpeg_quality=jpeg_quality,
+            )
+
+            # Initialize trainer
             trainer = Trainer(
                 model=model,
                 args=training_args,
                 train_dataset=train_ds,
                 eval_dataset=val_ds,
-                compute_metrics=lambda pred: compute_metrics(pred, model_name, resolution),
+                compute_metrics=lambda pred: compute_metrics(
+                    pred, model_name, jpeg_quality
+                ),
             )
-            
-            # Measure memory and time
+
             start_time = time.time()
             peak_memory = get_gpu_memory() if GPU_AVAILABLE else -1
-            
-            # Fine-tune
-            trainer.train()
-            
-            # Update peak memory
+
+            # Train only for the first JPEG quality
+            if jpeg_quality == jpeg_qualities[0]:
+                trainer.train()
+
             current_memory = get_gpu_memory() if GPU_AVAILABLE else -1
             peak_memory = max(peak_memory, current_memory)
-            
+
             # Evaluate
             eval_start_time = time.time()
             eval_results = trainer.evaluate()
             eval_time = time.time() - eval_start_time
-            
-            # Total training time
-            train_time = time.time() - start_time - eval_time
-            
-            # Save model
-            model.save_pretrained(f'./finetuned_{model_name}_{resolution}')
-            if model_type in ['vit', 'dinov2']:
-                preprocessor.save_pretrained(f'./finetuned_{model_name}_{resolution}')
-            
+
+            train_time = (
+                time.time() - start_time - eval_time
+                if jpeg_quality == jpeg_qualities[0]
+                else 0
+            )
+
+            # Save model and preprocessor
+            model.save_pretrained(f"./finetuned_{model_name}_jpeg{jpeg_quality}")
+            if model_type in ["vit", "dinov2"]:
+                preprocessor.save_pretrained(
+                    f"./finetuned_{model_name}_jpeg{jpeg_quality}"
+                )
+
             # Store results
-            results[model_name][resolution] = {
-                'peak_memory_mb': peak_memory,
-                'flops_giga': flops,
-                'train_time_seconds': train_time,
-                'eval_time_seconds': eval_time,
-                'eval_metrics': eval_results
+            results[model_name][jpeg_quality] = {
+                "peak_memory_mb": peak_memory,
+                "flops_giga": flops,
+                "train_time_seconds": train_time,
+                "eval_time_seconds": eval_time,
+                "eval_metrics": eval_results,
             }
-            print(f"Results for {model_name} at {resolution}x{resolution}: {results[model_name][resolution]}")
-    
-    # Save results to JSON
-    with open('results_metrics.json', 'w') as f:
+            print(
+                f"Results for {model_name} at JPEG quality {jpeg_quality}: "
+                f"{results[model_name][jpeg_quality]}"
+            )
+
+    # Save results
+    with open("results_metrics_jpeg.json", "w") as f:
         json.dump(results, f, indent=4)
 
 if __name__ == '__main__':
