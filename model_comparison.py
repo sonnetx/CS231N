@@ -203,6 +203,20 @@ class SimCLRForClassification(nn.Module):
         
         return {'logits': logits, 'loss': loss} if loss is not None else {'logits': logits}
 
+def freeze_backbone(model, model_type):
+    """Freezes the backbone of the model, leaving only the classifier trainable."""
+    if model_type in ["vit", "dinov2"]:
+        for name, param in model.named_parameters():
+            if "classifier" not in name:  # Train only the classifier head
+                param.requires_grad = False
+    elif model_type == "simclr":
+        for param in model.backbone.parameters():
+            param.requires_grad = False
+        for param in model.classifier.parameters():
+            param.requires_grad = True
+    else:
+        raise ValueError(f"Unsupported model_type: {model_type}")
+    
 # Main function for fine-tuning
 def main():
     """Fine-tunes models and evaluates performance on JPEG-compressed validation
@@ -217,6 +231,7 @@ def main():
     resolution = 224  # Fixed resolution
 
     results = {model["name"]: {} for model in models}
+    results_linear_probe = {model["name"]: {} for model in models}
 
     # Load dataset
     dataset = load_dataset("MKZuziak/ISIC_2019_224")
@@ -231,7 +246,7 @@ def main():
         transforms.RandomHorizontalFlip(),
         transforms.RandomRotation(20),
         transforms.ColorJitter(brightness=0.2, contrast=0.2),
-        degradation_transform(p=0.5),
+        DegradationTransform(p=0.5),
     ])
 
     for model_info in models:
@@ -366,9 +381,94 @@ def main():
                 f"{results[model_name][jpeg_quality]}"
             )
 
+            # Linear probing
+            print(f"\nLinear probing at JPEG quality: {jpeg_quality}")
+
+            # Reload model for linear probing
+            if model_type == "vit":
+                model = ViTForImageClassification.from_pretrained(
+                    model_id, num_labels=8, ignore_mismatched_sizes=True
+                )
+            elif model_type == "dinov2":
+                model = AutoModelForImageClassification.from_pretrained(
+                    model_id, num_labels=8, ignore_mismatched_sizes=True
+                )
+            elif model_type == "simclr":
+                backbone = timm.create_model("resnet50", pretrained=True, num_classes=0)
+                # Optional: Load true SimCLR weights if available
+                # backbone.load_state_dict(torch.load('path_to_simclr_weights.pth'))
+                model = SimCLRForClassification(backbone, num_classes=8)
+
+            model.to(device)
+            freeze_backbone(model, model_type)
+
+            # Linear probing training arguments
+            linear_probe_args = TrainingArguments(
+                output_dir=f"./results_{model_name}_jpeg{jpeg_quality}_linear_probe",
+                num_train_epochs=1,  # Fewer epochs for linear probing
+                per_device_train_batch_size=16,
+                per_device_eval_batch_size=16,
+                warmup_steps=100,
+                weight_decay=0.01,
+                logging_dir=f"./logs_{model_name}_jpeg{jpeg_quality}_linear_probe",
+                logging_steps=10,
+                evaluation_strategy="epoch",
+                save_strategy="epoch",
+                load_best_model_at_end=True,
+                metric_for_best_model="accuracy",
+            )
+
+            # Initialize trainer for linear probing
+            trainer = Trainer(
+                model=model,
+                args=linear_probe_args,
+                train_dataset=train_ds,
+                eval_dataset=val_ds,
+                compute_metrics=lambda pred: compute_metrics(
+                    pred, model_name, jpeg_quality, mode="linear_probe"
+                ),
+            )
+
+            # Linear probe
+            start_time = time.time()
+            peak_memory = get_gpu_memory() if GPU_AVAILABLE else -1
+            trainer.train()
+            current_memory = get_gpu_memory() if GPU_AVAILABLE else -1
+            peak_memory = max(peak_memory, current_memory)
+
+            # Evaluate linear probing
+            eval_start_time = time.time()
+            eval_results = trainer.evaluate()
+            eval_time = time.time() - eval_start_time
+            train_time = time.time() - start_time - eval_time
+
+            # Save linear probe model
+            model.save_pretrained(
+                f"./finetuned_{model_name}_jpeg{jpeg_quality}_linear_probe"
+            )
+            if model_type in ["vit", "dinov2"]:
+                preprocessor.save_pretrained(
+                    f"./finetuned_{model_name}_jpeg{jpeg_quality}_linear_probe"
+                )
+
+            # Store linear probing results
+            results_linear_probe[model_name][jpeg_quality] = {
+                "peak_memory_mb": peak_memory,
+                "flops_giga": flops,
+                "train_time_seconds": train_time,
+                "eval_time_seconds": eval_time,
+                "eval_metrics": eval_results,
+            }
+            print(
+                f"Linear probing results for {model_name} at JPEG quality "
+                f"{jpeg_quality}: {results_linear_probe[model_name][jpeg_quality]}"
+            )
+
     # Save results
     with open("results_metrics_jpeg.json", "w") as f:
         json.dump(results, f, indent=4)
+    with open("results_metrics_linear_probe.json", "w") as f:
+        json.dump(results_linear_probe, f, indent=4)
 
 if __name__ == '__main__':
     main()
