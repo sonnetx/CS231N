@@ -8,6 +8,7 @@ import torch.nn as nn
 from torch.utils.data import Dataset
 from PIL import Image
 from transformers import ViTForImageClassification, ViTFeatureExtractor, TrainingArguments, Trainer
+from transformers import AutoModelForImageClassification, AutoImageProcessor  # For DINOv2
 from datasets import load_dataset
 from torchvision import transforms
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
@@ -18,6 +19,7 @@ import os
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import confusion_matrix
+import timm  # For SimCLR's ResNet backbone
 
 try:
     import pynvml
@@ -37,6 +39,14 @@ class ISICDataset(Dataset):
         self.transform = transform
         self.model_type = model_type
 
+        # SimCLR-specific preprocessing
+        if model_type == 'simclr':
+            self.preprocessor = transforms.Compose([
+                transforms.Resize((resolution, resolution)),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ])
+
     def __len__(self):
         return len(self.dataset)
 
@@ -53,11 +63,13 @@ class ISICDataset(Dataset):
             image = self.transform(image)
         
         # Preprocess based on model type
-        if self.model_type == 'vit':
+        if self.model_type in ['vit', 'dinov2']:
             encoding = self.preprocessor(images=image, return_tensors="pt")
             pixel_values = encoding['pixel_values'].squeeze(0)
+        elif self.model_type == 'simclr':
+            pixel_values = self.preprocessor(image)
         else:
-            pass  # Add preprocessing for other models if needed
+            raise ValueError(f"Unsupported model_type: {self.model_type}")
         
         label = torch.tensor(label, dtype=torch.long)
         
@@ -99,12 +111,32 @@ def get_gpu_memory(device_id=0):
         return mem_info.used / 1024**2  # MB
     except:
         return -1
+    
+# Wrapper for SimCLR to match Trainer API
+class SimCLRForClassification(nn.Module):
+    def __init__(self, backbone, num_classes=8):
+        super().__init__()
+        self.backbone = backbone
+        self.classifier = nn.Linear(2048, num_classes)  # ResNet-50 output: 2048
+
+    def forward(self, pixel_values, labels=None):
+        features = self.backbone(pixel_values).pooler_output  # Get pooled output
+        logits = self.classifier(features)
+        
+        loss = None
+        if labels is not None:
+            loss_fct = nn.CrossEntropyLoss()
+            loss = loss_fct(logits, labels)
+        
+        return {'logits': logits, 'loss': loss} if loss is not None else {'logits': logits}
 
 # Main function for fine-tuning
 def main():
     # Models and resolutions to compare
     models = [
         {'name': 'vit', 'model_id': 'google/vit-base-patch16-224', 'type': 'vit'},
+        {'name': 'dinov2', 'model_id': 'facebook/dinov2-base', 'type': 'dinov2'},  # Load from Hugging Face
+        {'name': 'simclr', 'model_id': 'resnet50', 'type': 'simclr'},  # ResNet-50 from timm
     ]
     resolutions = [224, 112, 56]
     
@@ -136,8 +168,12 @@ def main():
             # Load preprocessor
             if model_type == 'vit':
                 preprocessor = ViTFeatureExtractor.from_pretrained(model_id, size=resolution)
+            elif model_type == 'dinov2':
+                preprocessor = AutoImageProcessor.from_pretrained(model_id, size=resolution)
+            elif model_type == 'simclr':
+                preprocessor = None  # Handled in ISICDataset
             else:
-                preprocessor = None  # timm models use manual preprocessing
+                raise ValueError(f"Unsupported model_type: {model_type}")
             
             # Create datasets
             train_ds = ISICDataset(train_dataset, preprocessor, resolution, transform, model_type)
@@ -150,8 +186,21 @@ def main():
                     num_labels=8,
                     ignore_mismatched_sizes=True
                 )
+            elif model_type == 'dinov2':
+                model = AutoModelForImageClassification.from_pretrained(
+                    model_id,
+                    num_labels=8,
+                    ignore_mismatched_sizes=True
+                )
+            elif model_type == 'simclr':
+                # Load ResNet-50 from timm (fallback if no SimCLR weights)
+                backbone = timm.create_model('resnet50', pretrained=True, num_classes=0)  # No classifier
+                model = SimCLRForClassification(backbone, num_classes=8)
             else:
-                pass  # Load other models as needed
+                raise ValueError(f"Unsupported model_type: {model_type}")
+            
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            model.to(device)
             
             # Estimate FLOPs
             input_tensor = torch.randn(1, 3, resolution, resolution)
@@ -207,7 +256,7 @@ def main():
             
             # Save model
             model.save_pretrained(f'./finetuned_{model_name}_{resolution}')
-            if model_type == 'vit':
+            if model_type in ['vit', 'dinov2']:
                 preprocessor.save_pretrained(f'./finetuned_{model_name}_{resolution}')
             
             # Store results
