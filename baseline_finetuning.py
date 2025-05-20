@@ -3,6 +3,8 @@ This script fine-tunes a ViT model on the ISIC 2019 dataset with various resolut
 It includes data augmentation, model evaluation, and GPU memory monitoring.
 '''
 
+#TODO: pass the file paths as os.imports
+
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset
@@ -27,41 +29,6 @@ except ImportError:
     GPU_AVAILABLE = False
     print("pynvml not installed, GPU memory monitoring disabled.")
 from thop import profile
-
-# Custom Dataset for ISIC 2019 with Downsampling and Model-Specific Preprocessing
-class ISICDataset(Dataset):
-    def __init__(self, dataset, preprocessor, resolution=224, transform=None, model_type='vit'):
-        self.dataset = dataset
-        self.preprocessor = preprocessor
-        self.resolution = resolution
-        self.transform = transform
-        self.model_type = model_type
-
-    def __len__(self):
-        return len(self.dataset)
-
-    def __getitem__(self, idx):
-        item = self.dataset[idx]
-        image = item['image']  # PIL Image
-        label = item['label']  # Integer label (0-7)
-        
-        # Downsample image
-        if self.resolution != 224:
-            image = image.resize((self.resolution, self.resolution), Image.LANCZOS)
-        
-        if self.transform:
-            image = self.transform(image)
-        
-        # Preprocess based on model type
-        if self.model_type == 'vit':
-            encoding = self.preprocessor(images=image, return_tensors="pt")
-            pixel_values = encoding['pixel_values'].squeeze(0)
-        else:
-            pass  # Add preprocessing for other models if needed
-        
-        label = torch.tensor(label, dtype=torch.long)
-        
-        return {'pixel_values': pixel_values, 'labels': label}
 
 # Compute metrics for evaluation
 def compute_metrics(eval_pred, model_name, resolution):
@@ -171,7 +138,7 @@ def main():
                 weight_decay=0.01,
                 logging_dir=f'./logs_{model_name}_{resolution}',
                 logging_steps=10,
-                evaluation_strategy='epoch',
+                eval_strategy='epoch',
                 save_strategy='epoch',
                 load_best_model_at_end=True,
                 metric_for_best_model='accuracy',

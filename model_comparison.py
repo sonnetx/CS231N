@@ -216,7 +216,11 @@ def freeze_backbone(model, model_type):
             param.requires_grad = True
     else:
         raise ValueError(f"Unsupported model_type: {model_type}")
-    
+
+
+
+
+
 # Main function for fine-tuning
 def main():
     """Fine-tunes models and evaluates performance on JPEG-compressed validation
@@ -349,7 +353,6 @@ def main():
 
             current_memory = get_gpu_memory() if GPU_AVAILABLE else -1
             peak_memory = max(peak_memory, current_memory)
-
             # Evaluate
             eval_start_time = time.time()
             eval_results = trainer.evaluate()
