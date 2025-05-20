@@ -10,7 +10,7 @@ from torch.utils.data import Dataset
 from PIL import Image
 from transformers import ViTForImageClassification, ViTFeatureExtractor, TrainingArguments, Trainer
 from transformers import AutoModelForImageClassification, AutoImageProcessor  # For DINOv2
-from datasets import load_dataset
+from datasets import load_dataset, ClassLabel
 from torchvision import transforms
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 import numpy as np
@@ -234,12 +234,11 @@ def main():
     results_linear_probe = {model["name"]: {} for model in models}
 
     # Load dataset
-    dataset = load_dataset("MKZuziak/ISIC_2019_224")
-    full_dataset = dataset["train"].train_test_split(
-        test_size=0.2, stratify_by_column="label", seed=42
-    )
-    train_dataset = full_dataset["train"]
-    val_dataset = full_dataset["test"]
+    dataset = load_dataset("MKZuziak/ISIC_2019_224", cache_dir=os.environ["HF_DATASETS_CACHE"])
+    dataset = dataset.cast_column("label", ClassLabel(num_classes=9))
+    full_dataset = dataset["train"].train_test_split(test_size=0.2, stratify_by_column="label", seed=42)
+
+    train_dataset, val_dataset = full_dataset["train"], full_dataset["test"]
 
     # Define training augmentations
     transform = transforms.Compose([
@@ -303,15 +302,15 @@ def main():
 
         # Define training arguments
         training_args = TrainingArguments(
-            output_dir=f"./results_{model_name}",
+            output_dir=os.path.join(env_path("TRAIN_OUTPUT_DIR", "."), f"{name}"),
             num_train_epochs=3,
             per_device_train_batch_size=16,
             per_device_eval_batch_size=16,
             warmup_steps=500,
             weight_decay=0.01,
-            logging_dir=f"./logs_{model_name}",
+            logging_dir=os.path.join(env_path("LOG_DIR", "."), f"{name}"),
             logging_steps=10,
-            evaluation_strategy="epoch",
+            eval_strategy="epoch",
             save_strategy="epoch",
             load_best_model_at_end=True,
             metric_for_best_model="accuracy",
