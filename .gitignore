@@ -1,0 +1,3 @@
+config.yaml
+run_sonnet.slurm
+sherlock_sonnet_cs2.sbatch
