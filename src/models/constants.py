@@ -1,0 +1,5 @@
+HF_MODELS = ["vit", "dinov2"]
+SSL_MODEL = "simclr"
+ALL_MODEL_TYPES = HF_MODELS + SSL_MODELS
+SIMCLR_BACKBONE = "resnet50"
+NUM_CLASSES = 8

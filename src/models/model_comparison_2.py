@@ -1,44 +1,85 @@
+# Environment Setup
 import os
+
+os.environ["WANDB_DISABLED"] = "true"  # Disable Weights & Biases logging
+
+# Standard Libraries
+import io
+import json
+import random
+import time
+
+# Scientific & Visualization Libraries
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from PIL import Image
+
+# PyTorch & Torchvision
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset
-from PIL import Image
-from transformers import ViTForImageClassification, ViTFeatureExtractor, TrainingArguments, Trainer
-from transformers import AutoModelForImageClassification, AutoImageProcessor
-from transformers import TrainerCallback
-from datasets import load_dataset, ClassLabel
 from torchvision import transforms
-from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
-import numpy as np
-import time
-import json
-import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn.metrics import confusion_matrix
+
+# Hugging Face Transformers & Datasets
+from transformers import (
+    AutoImageProcessor,
+    AutoModelForImageClassification,
+    Trainer,
+    TrainerCallback,
+    TrainingArguments,
+    ViTFeatureExtractor,
+    ViTForImageClassification,
+)
+from datasets import load_dataset, ClassLabel
+
+
+# Metrics
+from sklearn.metrics import (
+    accuracy_score,
+    confusion_matrix,
+    f1_score,
+    roc_auc_score,
+)
+
+# Model Profiling & Vision Backbones
 import timm
-import random
-import io
-import os
-os.environ["WANDB_DISABLED"] = "true"
+from thop import profile
+
+# Local Application Imports
+from constants import HF_MODELS, SSL_MODEL, SIMCLR_BACKBONE, NUM_CLASSES
+
+
+# GPU Memory Monitoring (optional)
 try:
     import pynvml
+
     pynvml.nvmlInit()
     GPU_AVAILABLE = True
 except ImportError:
     GPU_AVAILABLE = False
     print("pynvml not installed, GPU memory monitoring disabled.")
 
-from thop import profile
 
 # Cache paths
-os.environ["TRANSFORMERS_CACHE"] = os.getenv("TRANSFORMERS_CACHE", "~/.cache/huggingface/transformers")
-os.environ["HF_DATASETS_CACHE"] = os.getenv("HF_DATASETS_CACHE", "~/.cache/huggingface/datasets")
+os.environ["TRANSFORMERS_CACHE"] = os.getenv(
+    "TRANSFORMERS_CACHE", "~/.cache/huggingface/transformers"
+)
+os.environ["HF_DATASETS_CACHE"] = os.getenv(
+    "HF_DATASETS_CACHE", "~/.cache/huggingface/datasets"
+)
 os.environ["HF_HOME"] = os.getenv("HF_HOME", "~/.cache/huggingface")
 
+
 def env_path(key, default):
+    """Get environment variable or default value."""
     return os.environ.get(key, default)
 
+
 class DegradationTransform:
+    """
+    Applies random JPEG compression and Gaussian blur to an image."""
+
     def __init__(self, p=0.5):
         self.p = p
 
@@ -63,8 +104,11 @@ class DegradationTransform:
             img = transforms.GaussianBlur(kernel_size=kernel_size, sigma=sigma)(img)
         if random.random() < self.p:
             num_colors = random.randint(16, 64)
-            img = img.quantize(colors=num_colors, method=Image.Quantize.MAXCOVERAGE).convert('RGB')
+            img = img.quantize(
+                colors=num_colors, method=Image.Quantize.MAXCOVERAGE
+            ).convert("RGB")
         return img
+
 
 class JPEGCompressionTransform:
     def __init__(self, quality):
@@ -78,8 +122,17 @@ class JPEGCompressionTransform:
         buffer.seek(0)
         return Image.open(buffer)
 
+
 class ISICDataset(Dataset):
-    def __init__(self, dataset, preprocessor=None, resolution=224, transform=None, model_type="vit", jpeg_quality=None):
+    def __init__(
+        self,
+        dataset,
+        preprocessor=None,
+        resolution=224,
+        transform=None,
+        model_type="vit",
+        jpeg_quality=None,
+    ):
         self.dataset = dataset
         self.preprocessor = preprocessor
         self.resolution = resolution
@@ -87,12 +140,15 @@ class ISICDataset(Dataset):
         self.model_type = model_type
         self.jpeg_quality = jpeg_quality
         if model_type == "simclr":
-            self.preprocessor = transforms.Compose([
-                transforms.Resize((resolution, resolution)),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225]),
-            ])
+            self.preprocessor = transforms.Compose(
+                [
+                    transforms.Resize((resolution, resolution)),
+                    transforms.ToTensor(),
+                    transforms.Normalize(
+                        mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                    ),
+                ]
+            )
 
     def __len__(self):
         return len(self.dataset)
@@ -111,7 +167,7 @@ class ISICDataset(Dataset):
         if self.jpeg_quality is not None:
             image = JPEGCompressionTransform(self.jpeg_quality)(image)
 
-        if self.model_type in ["vit", "dinov2"]:
+        if self.model_type in HF_MODELS:
             encoding = self.preprocessor(images=image, return_tensors="pt")
             pixel_values = encoding["pixel_values"].squeeze(0)
         elif self.model_type == "simclr":
@@ -122,6 +178,7 @@ class ISICDataset(Dataset):
         label = torch.tensor(label, dtype=torch.long)
         return {"pixel_values": pixel_values, "labels": label}
 
+
 def compute_metrics(eval_pred, model_name, jpeg_quality):
     logits, labels = eval_pred
     predictions = np.argmax(logits, axis=-1)
@@ -130,7 +187,9 @@ def compute_metrics(eval_pred, model_name, jpeg_quality):
     probs = torch.softmax(torch.tensor(logits), dim=1).numpy()
     auc = roc_auc_score(labels, probs, multi_class="ovr")
 
-    plot_dir = os.path.join(env_path("PLOT_DIR", "."), model_name, f"jpeg_{jpeg_quality}")
+    plot_dir = os.path.join(
+        env_path("PLOT_DIR", "."), model_name, f"jpeg_{jpeg_quality}"
+    )
     os.makedirs(plot_dir, exist_ok=True)
 
     conf_mat = confusion_matrix(labels, predictions)
@@ -147,8 +206,8 @@ def compute_metrics(eval_pred, model_name, jpeg_quality):
     with open(os.path.join(plot_dir, "class_breakdown.json"), "w") as f:
         json.dump(class_breakdown, f)
 
-
     return {"accuracy": acc, "f1": f1, "auc": auc}
+
 
 def get_gpu_memory(device_id=0):
     if not GPU_AVAILABLE:
@@ -159,6 +218,7 @@ def get_gpu_memory(device_id=0):
         return mem_info.used / 1024**2
     except:
         return -1
+
 
 class SimCLRForClassification(nn.Module):
     def __init__(self, backbone, num_classes=8):
@@ -172,10 +232,13 @@ class SimCLRForClassification(nn.Module):
         loss = None
         if labels is not None:
             loss = nn.CrossEntropyLoss()(logits, labels)
-        return {'logits': logits, 'loss': loss} if loss is not None else {'logits': logits}
+        return (
+            {"logits": logits, "loss": loss} if loss is not None else {"logits": logits}
+        )
+
 
 def freeze_backbone(model, model_type):
-    if model_type in ["vit", "dinov2"]:
+    if model_type in HF_MODELS:
         for name, param in model.named_parameters():
             if "classifier" not in name:
                 param.requires_grad = False
@@ -188,7 +251,6 @@ def freeze_backbone(model, model_type):
         raise ValueError(f"Unsupported model_type: {model_type}")
 
 
-
 class LossLoggerCallback(TrainerCallback):
     """
     Logs each training step's loss and other metrics to a structured JSON Lines file.
@@ -196,7 +258,9 @@ class LossLoggerCallback(TrainerCallback):
 
     def __init__(self, log_dir: str, phase: str, model_name: str, jpeg_quality: int):
         os.makedirs(log_dir, exist_ok=True)
-        self.log_file = os.path.join(log_dir, f"{model_name}_jpeg{jpeg_quality}_{phase}_log.jsonl")
+        self.log_file = os.path.join(
+            log_dir, f"{model_name}_jpeg{jpeg_quality}_{phase}_log.jsonl"
+        )
 
     def on_log(self, args, state, control, logs=None, **kwargs):
         if logs is None:
@@ -204,6 +268,7 @@ class LossLoggerCallback(TrainerCallback):
         with open(self.log_file, "a") as f:
             json.dump({"step": state.global_step, **logs}, f)
             f.write("\n")
+
 
 def main():
     models = [
@@ -217,23 +282,35 @@ def main():
     results = {m["name"]: {} for m in models}
     results_linear_probe = {m["name"]: {} for m in models}
 
-    dataset = load_dataset("MKZuziak/ISIC_2019_224", cache_dir=os.environ["HF_DATASETS_CACHE"])
+    dataset = load_dataset(
+        "MKZuziak/ISIC_2019_224", cache_dir=os.environ["HF_DATASETS_CACHE"]
+    )
     dataset = dataset.cast_column("label", ClassLabel(num_classes=8))
 
-    full_dataset = dataset["train"].train_test_split(test_size=0.2, stratify_by_column="label", seed=42)
+    full_dataset = dataset["train"].train_test_split(
+        test_size=0.2, stratify_by_column="label", seed=42
+    )
     train_dataset, val_dataset = full_dataset["train"], full_dataset["test"]
 
-    transform = transforms.Compose([
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomRotation(20),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2),
-        DegradationTransform(p=0.5),
-    ])
+    transform = transforms.Compose(
+        [
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomRotation(20),
+            transforms.ColorJitter(brightness=0.2, contrast=0.2),
+            DegradationTransform(p=0.5),
+        ]
+    )
 
     for model_info in models:
-        name, model_id, typ = model_info["name"], model_info["model_id"], model_info["type"]
+        name, model_id, typ = (
+            model_info["name"],
+            model_info["model_id"],
+            model_info["type"],
+        )
         if typ == "vit":
-            preprocessor = ViTFeatureExtractor.from_pretrained(model_id, size=resolution)
+            preprocessor = ViTFeatureExtractor.from_pretrained(
+                model_id, size=resolution
+            )
         elif typ == "dinov2":
             preprocessor = AutoImageProcessor.from_pretrained(model_id, size=resolution)
         else:
@@ -241,11 +318,17 @@ def main():
 
         train_ds = ISICDataset(train_dataset, preprocessor, resolution, transform, typ)
         if typ == "vit":
-            model = ViTForImageClassification.from_pretrained(model_id, num_labels=8, ignore_mismatched_sizes=True)
+            model = ViTForImageClassification.from_pretrained(
+                model_id, num_labels=8, ignore_mismatched_sizes=True
+            )
         elif typ == "dinov2":
-            model = AutoModelForImageClassification.from_pretrained(model_id, num_labels=8, ignore_mismatched_sizes=True)
+            model = AutoModelForImageClassification.from_pretrained(
+                model_id, num_labels=8, ignore_mismatched_sizes=True
+            )
         elif typ == "simclr":
-            model = SimCLRForClassification(timm.create_model("resnet50", pretrained=True, num_classes=0), 8)
+            model = SimCLRForClassification(
+                timm.create_model("resnet50", pretrained=True, num_classes=0), 8
+            )
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device)
@@ -275,15 +358,27 @@ def main():
         )
 
         for jpeg_quality in jpeg_qualities:
-            val_ds = ISICDataset(val_dataset, preprocessor, resolution, model_type=typ, jpeg_quality=jpeg_quality)
+            val_ds = ISICDataset(
+                val_dataset,
+                preprocessor,
+                resolution,
+                model_type=typ,
+                jpeg_quality=jpeg_quality,
+            )
             trainer = Trainer(
                 model=model,
                 args=train_args,
                 train_dataset=train_ds,
                 eval_dataset=val_ds,
                 compute_metrics=lambda pred: compute_metrics(pred, name, jpeg_quality),
-                callbacks=[LossLoggerCallback(log_dir=os.environ["LOG_DIR"], phase="finetune", model_name=name, jpeg_quality=jpeg_quality)]
-
+                callbacks=[
+                    LossLoggerCallback(
+                        log_dir=os.environ["LOG_DIR"],
+                        phase="finetune",
+                        model_name=name,
+                        jpeg_quality=jpeg_quality,
+                    )
+                ],
             )
 
             # ---- TRAINING PHASE ----
@@ -299,22 +394,33 @@ def main():
             eval_start_time = time.time()
             eval_results = trainer.evaluate()
             eval_time = time.time() - eval_start_time
-            train_time = time.time() - start_time - eval_time if jpeg_quality == jpeg_qualities[0] else 0
+            train_time = (
+                time.time() - start_time - eval_time
+                if jpeg_quality == jpeg_qualities[0]
+                else 0
+            )
 
-            model_dir = os.path.join(env_path("MODEL_DIR", "."), f"{name}_jpeg{jpeg_quality}")
+            model_dir = os.path.join(
+                env_path("MODEL_DIR", "."), f"{name}_jpeg{jpeg_quality}"
+            )
             os.makedirs(model_dir, exist_ok=True)
 
-            if typ in ["vit", "dinov2"]:
+            if typ in HF_MODELS:
                 model.save_pretrained(model_dir)
                 preprocessor.save_pretrained(model_dir)
-            elif typ == "simclr":
-                torch.save(model.state_dict(), os.path.join(model_dir, "pytorch_model.bin"))
+            elif typ == SSL_MODEL:
+                torch.save(
+                    model.state_dict(), os.path.join(model_dir, "pytorch_model.bin")
+                )
                 with open(os.path.join(model_dir, "config.json"), "w") as f:
-                    json.dump({
-                        "model_type": "simclr",
-                        "backbone": "resnet50",
-                        "num_classes": 8
-                    }, f)
+                    json.dump(
+                        {
+                            "model_type": SSL_MODEL,
+                            "backbone": "resnet50",
+                            "num_classes": 8,
+                        },
+                        f,
+                    )
 
             results[name][jpeg_quality] = {
                 "peak_memory_mb": peak_memory,
@@ -324,14 +430,20 @@ def main():
                 "eval_metrics": eval_results,
             }
 
-            print(f"[Finetune] {name} @ JPEG {jpeg_quality}: {results[name][jpeg_quality]}")
+            print(
+                f"[Finetune] {name} @ JPEG {jpeg_quality}: {results[name][jpeg_quality]}"
+            )
 
             # ---- LINEAR PROBE PHASE ----
             if typ == "vit":
-                model = ViTForImageClassification.from_pretrained(model_id, num_labels=8, ignore_mismatched_sizes=True)
+                model = ViTForImageClassification.from_pretrained(
+                    model_id, num_labels=8, ignore_mismatched_sizes=True
+                )
             elif typ == "dinov2":
-                model = AutoModelForImageClassification.from_pretrained(model_id, num_labels=8, ignore_mismatched_sizes=True)
-            elif typ == "simclr":
+                model = AutoModelForImageClassification.from_pretrained(
+                    model_id, num_labels=8, ignore_mismatched_sizes=True
+                )
+            elif typ == SSL_MODEL:
                 backbone = timm.create_model("resnet50", pretrained=True, num_classes=0)
                 model = SimCLRForClassification(backbone, 8)
 
@@ -339,13 +451,18 @@ def main():
             freeze_backbone(model, typ)
 
             linear_args = TrainingArguments(
-                output_dir=os.path.join(env_path("TRAIN_OUTPUT_DIR", "."), f"{name}_jpeg{jpeg_quality}_linear_probe"),
+                output_dir=os.path.join(
+                    env_path("TRAIN_OUTPUT_DIR", "."),
+                    f"{name}_jpeg{jpeg_quality}_linear_probe",
+                ),
                 num_train_epochs=1,
                 per_device_train_batch_size=16,
                 per_device_eval_batch_size=16,
                 warmup_steps=100,
                 weight_decay=0.01,
-                logging_dir=os.path.join(env_path("LOG_DIR", "."), f"{name}_jpeg{jpeg_quality}_linear_probe"),
+                logging_dir=os.path.join(
+                    env_path("LOG_DIR", "."), f"{name}_jpeg{jpeg_quality}_linear_probe"
+                ),
                 logging_steps=1,
                 eval_strategy="epoch",
                 save_strategy="epoch",
@@ -359,8 +476,14 @@ def main():
                 train_dataset=train_ds,
                 eval_dataset=val_ds,
                 compute_metrics=lambda pred: compute_metrics(pred, name, jpeg_quality),
-                callbacks=[LossLoggerCallback(log_dir=os.environ["LOG_DIR"], phase="linear_probe", model_name=name, jpeg_quality=jpeg_quality)]
-
+                callbacks=[
+                    LossLoggerCallback(
+                        log_dir=os.environ["LOG_DIR"],
+                        phase="linear_probe",
+                        model_name=name,
+                        jpeg_quality=jpeg_quality,
+                    )
+                ],
             )
 
             start_time = time.time()
@@ -374,20 +497,27 @@ def main():
             eval_time = time.time() - eval_start_time
             train_time = time.time() - start_time - eval_time
 
-            model_dir = os.path.join(env_path("MODEL_DIR", "."), f"{name}_jpeg{jpeg_quality}_linear_probe")
+            model_dir = os.path.join(
+                env_path("MODEL_DIR", "."), f"{name}_jpeg{jpeg_quality}_linear_probe"
+            )
             os.makedirs(model_dir, exist_ok=True)
 
-            if typ in ["vit", "dinov2"]:
+            if typ in HF_MODELS:
                 model.save_pretrained(model_dir)
                 preprocessor.save_pretrained(model_dir)
-            elif typ == "simclr":
-                torch.save(model.state_dict(), os.path.join(model_dir, "pytorch_model.bin"))
+            elif typ == SSL_MODEL:
+                torch.save(
+                    model.state_dict(), os.path.join(model_dir, "pytorch_model.bin")
+                )
                 with open(os.path.join(model_dir, "config.json"), "w") as f:
-                    json.dump({
-                        "model_type": "simclr",
-                        "backbone": "resnet50",
-                        "num_classes": 8
-                    }, f)
+                    json.dump(
+                        {
+                            "model_type": SSL_MODEL,
+                            "backbone": "resnet50",
+                            "num_classes": 8,
+                        },
+                        f,
+                    )
 
             results_linear_probe[name][jpeg_quality] = {
                 "peak_memory_mb": peak_memory,
@@ -397,12 +527,24 @@ def main():
                 "eval_metrics": eval_results,
             }
 
-            print(f"[LinearProbe] {name} @ JPEG {jpeg_quality}: {results_linear_probe[name][jpeg_quality]}")
+            print(
+                f"[LinearProbe] {name} @ JPEG {jpeg_quality}: {results_linear_probe[name][jpeg_quality]}"
+            )
 
-    with open(os.path.join(env_path("TRAIN_OUTPUT_DIR", "."), "results_metrics_finetune.json"), "w") as f:
+    with open(
+        os.path.join(
+            env_path("TRAIN_OUTPUT_DIR", "."), "results_metrics_finetune.json"
+        ),
+        "w",
+    ) as f:
         json.dump(results, f, indent=4)
 
-    with open(os.path.join(env_path("TRAIN_OUTPUT_DIR", "."), "results_metrics_linear_probe.json"), "w") as f:
+    with open(
+        os.path.join(
+            env_path("TRAIN_OUTPUT_DIR", "."), "results_metrics_linear_probe.json"
+        ),
+        "w",
+    ) as f:
         json.dump(results_linear_probe, f, indent=4)
 
 
