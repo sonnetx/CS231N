@@ -39,7 +39,16 @@ for placeholder in "${!config_map[@]}"; do
   if [ -z "$value" ]; then
     echo "Warning: Config key '${config_map[$placeholder]}' is empty or missing"
   fi
-  sed -i '' "s|{{${placeholder}}}|${value}|g" "$JOB_FILE"
+
+  # Escape characters that might break sed (like slashes or ampersands)
+  value_escaped=$(printf '%s\n' "$value" | sed 's/[&/\]/\\&/g')
+
+  # Detect OS and use correct sed syntax
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+      sed -i '' "s|{{${placeholder}}}|${value}|g" "$JOB_FILE"
+  else
+      sed -i "s|{{${placeholder}}}|${value}|g" "$JOB_FILE"
+  fi
 done
 
 # Submit the job
