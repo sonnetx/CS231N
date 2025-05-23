@@ -268,7 +268,7 @@ class LossLoggerCallback(TrainerCallback):
             f.write("\n")
 
 
-def main(num_train_images=1000, images_per_transform=200, resolution=224):
+def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
     models = [
         {"name": "vit", "model_id": "google/vit-base-patch16-224", "type": "vit"},
         {"name": "dinov2", "model_id": "facebook/dinov2-base", "type": "dinov2"},
@@ -284,11 +284,36 @@ def main(num_train_images=1000, images_per_transform=200, resolution=224):
         split=f"train[:{num_train_images}]",
     )
 
-    dataset = dataset.cast_column("label", ClassLabel(num_classes=8))
+    # Filter to first two classes and cast labels
+    dataset = dataset.filter(lambda x: x["label"] in [0, 1])
+    dataset = dataset.cast_column("label", ClassLabel(num_classes=2))
 
-    full_dataset = dataset["train"].train_test_split(
+    # Get class counts and balance dataset
+    labels = np.array(dataset["label"])
+    class_0_indices = np.where(labels == 0)[0]
+    class_1_indices = np.where(labels == 1)[0]
+
+    min_class_size = min(len(class_0_indices), len(class_1_indices))
+
+    max_possible_images = min_class_size * 2
+    if num_train_images > max_possible_images:
+        print(f"Note: Requested {num_train_images} images, but only {max_possible_images} "
+              f"images available for balanced dataset with 2 classes. Using {max_possible_images} images.")
+        num_train_images = max_possible_images
+
+    np.random.seed(42)
+    class_0_sample = np.random.choice(class_0_indices, num_train_images // 2, replace=False)
+    class_1_sample = np.random.choice(class_1_indices, num_train_images // 2, replace=False)
+    balanced_indices = np.concatenate([class_0_sample, class_1_sample])
+    np.random.shuffle(balanced_indices)
+
+    balanced_dataset = dataset.select(balanced_indices)
+
+    # Split into train and validation
+    full_dataset = balanced_dataset.train_test_split(
         test_size=0.2, stratify_by_column="label", seed=42
     )
+
     train_dataset, val_dataset = full_dataset["train"], full_dataset["test"]
     
     degradation_transforms = [
@@ -299,9 +324,9 @@ def main(num_train_images=1000, images_per_transform=200, resolution=224):
 
     num_transforms = len(degradation_transforms)
     num_images = len(train_dataset)
+    images_per_transform = int(num_images * proportion_per_transform)
 
     transformed_datasets = []
-        
     indices = np.arange(num_images)
     np.random.shuffle(indices)
 
