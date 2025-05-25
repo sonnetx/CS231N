@@ -9,6 +9,8 @@ vit/
 dinov2/
 vit_linear_probe/
 dinov2_linear_probe/
+simclr/
+simclr_linear_probe/
 **/checkpoint-*/
 **/model.safetensors
 **/optimizer.pt

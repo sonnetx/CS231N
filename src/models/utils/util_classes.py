@@ -12,7 +12,7 @@ from torch.utils.data import Dataset
 from torchvision import transforms
 from transformers import TrainerCallback
 
-from .constants import HF_MODELS, NUM_FILTERED_CLASSES
+from .constants import HF_MODELS, NUM_FILTERED_CLASSES, SSL_MODEL
 from .transforms import JPEGCompressionTransform
 
 class ISICDataset(Dataset):
@@ -31,7 +31,7 @@ class ISICDataset(Dataset):
         self.transform = transform
         self.model_type = model_type
         self.jpeg_quality = jpeg_quality
-        if model_type == "simclr":
+        if model_type == SSL_MODEL:
             self.preprocessor = transforms.Compose(
                 [
                     transforms.Resize((resolution, resolution)),
@@ -74,7 +74,7 @@ class ISICDataset(Dataset):
         if self.model_type in HF_MODELS:
             encoding = self.preprocessor(images=image, return_tensors="pt")
             pixel_values = encoding["pixel_values"].squeeze(0)
-        elif self.model_type == "simclr":
+        elif self.model_type == SSL_MODEL:
             pixel_values = self.preprocessor(image)
         else:
             raise ValueError(f"Unsupported model_type: {self.model_type}")

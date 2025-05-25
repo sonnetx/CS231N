@@ -65,6 +65,12 @@ from utils.util_classes import (
     SimCLRForClassification,
     LossLoggerCallback,
 )
+from utils.util_methods import (
+    env_path,
+    compute_metrics,
+    get_gpu_memory,
+    freeze_backbone,
+)
 
 # GPU Memory Monitoring (optional)
 try:
@@ -76,7 +82,6 @@ except ImportError:
     GPU_AVAILABLE = False
     print("pynvml not installed, GPU memory monitoring disabled.")
 
-
 # Cache paths
 os.environ["TRANSFORMERS_CACHE"] = os.getenv(
     "TRANSFORMERS_CACHE", "~/.cache/huggingface/transformers"
@@ -86,179 +91,13 @@ os.environ["HF_DATASETS_CACHE"] = os.getenv(
 )
 os.environ["HF_HOME"] = os.getenv("HF_HOME", "~/.cache/huggingface")
 
-
-def env_path(key, default):
-    """Get environment variable or default value."""
-    return os.environ.get(key, default)
-
-
-# class ISICDataset(Dataset):
-#     def __init__(
-#         self,
-#         dataset,
-#         preprocessor=None,
-#         resolution=224,
-#         transform=None,
-#         model_type="vit",
-#         jpeg_quality=None,
-#     ):
-#         self.dataset = dataset
-#         self.preprocessor = preprocessor
-#         self.resolution = resolution
-#         self.transform = transform
-#         self.model_type = model_type
-#         self.jpeg_quality = jpeg_quality
-#         if model_type == "simclr":
-#             self.preprocessor = transforms.Compose(
-#                 [
-#                     transforms.Resize((resolution, resolution)),
-#                     transforms.ToTensor(),
-#                     transforms.Normalize(
-#                         mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-#                     ),
-#                 ]
-#             )
-
-#     def __len__(self):
-#         return len(self.dataset)
-
-#     def __getitem__(self, idx):
-#         # Convert numpy.int64 to Python int if necessary
-#         if isinstance(idx, (np.integer, np.int64)):
-#             idx = int(idx)
-            
-#         # Handle both direct dataset access and Subset access
-#         if hasattr(self.dataset, 'dataset'):
-#             # This is a Subset
-#             subset_idx = int(self.dataset.indices[idx])  # Convert the index from the indices array
-#             item = self.dataset.dataset[subset_idx]
-#         else:
-#             # This is a direct dataset
-#             item = self.dataset[idx]
-            
-#         image = item["image"]
-#         label = item["label"]
-
-#         if self.resolution != 224:
-#             image = image.resize((self.resolution, self.resolution), Image.LANCZOS)
-
-#         if self.transform:
-#             image = self.transform(image)
-
-#         if self.jpeg_quality is not None:
-#             image = JPEGCompressionTransform(self.jpeg_quality)(image)
-
-#         if self.model_type in HF_MODELS:
-#             encoding = self.preprocessor(images=image, return_tensors="pt")
-#             pixel_values = encoding["pixel_values"].squeeze(0)
-#         elif self.model_type == "simclr":
-#             pixel_values = self.preprocessor(image)
-#         else:
-#             raise ValueError(f"Unsupported model_type: {self.model_type}")
-
-#         label = torch.tensor(label, dtype=torch.long)
-#         return {"pixel_values": pixel_values, "labels": label}
-
-
-def compute_metrics(eval_pred, model_name):
-    logits, labels = eval_pred
-    predictions = np.argmax(logits, axis=-1)
-    acc = accuracy_score(labels, predictions)
-    f1 = f1_score(labels, predictions, average="weighted")
     
-    # For binary classification, use the probability of the positive class
-    probs = torch.softmax(torch.tensor(logits), dim=1).numpy()
-    # Use the probability of class 1 (positive class) for ROC AUC
-    auc = roc_auc_score(labels, probs[:, 1])
-
-    plot_dir = os.path.join(
-        env_path("PLOT_DIR", "."), model_name
-    )
-    os.makedirs(plot_dir, exist_ok=True)
-
-    conf_mat = confusion_matrix(labels, predictions)
-    plt.figure(figsize=(10, 10))
-    sns.heatmap(conf_mat, annot=True, cmap="Blues")
-    plt.xlabel("Predicted labels")
-    plt.ylabel("True labels")
-    plt.title(f"{model_name}_conf_mat")
-    plt.savefig(os.path.join(plot_dir, "conf_mat.png"), dpi=300, bbox_inches="tight")
-    plt.close()
-
-    unique, counts = np.unique(predictions, return_counts=True)
-    class_breakdown = {str(k): int(v) for k, v in zip(unique, counts)}
-    with open(os.path.join(plot_dir, "class_breakdown.json"), "w") as f:
-        json.dump(class_breakdown, f)
-
-    return {"accuracy": acc, "f1": f1, "auc": auc}
-
-
-def get_gpu_memory(device_id=0):
-    if not GPU_AVAILABLE:
-        return -1
-    try:
-        handle = pynvml.nvmlDeviceGetHandleByIndex(device_id)
-        mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-        return mem_info.used / 1024**2
-    except:
-        return -1
-
-
-# class SimCLRForClassification(nn.Module):
-#     def __init__(self, backbone, num_classes=NUM_FILTERED_CLASSES):
-#         super().__init__()
-#         self.backbone = backbone
-#         self.classifier = nn.Linear(2048, num_classes)
-
-#     def forward(self, pixel_values, labels=None):
-#         features = self.backbone(pixel_values)
-#         logits = self.classifier(features)
-#         loss = None
-#         if labels is not None:
-#             loss = nn.CrossEntropyLoss()(logits, labels)
-#         return (
-#             {"logits": logits, "loss": loss} if loss is not None else {"logits": logits}
-#         )
-
-
-def freeze_backbone(model, model_type):
-    if model_type in HF_MODELS:
-        for name, param in model.named_parameters():
-            if "classifier" not in name:
-                param.requires_grad = False
-    elif model_type == "simclr":
-        for param in model.backbone.parameters():
-            param.requires_grad = False
-        for param in model.classifier.parameters():
-            param.requires_grad = True
-    else:
-        raise ValueError(f"Unsupported model_type: {model_type}")
-
-
-# class LossLoggerCallback(TrainerCallback):
-#     """
-#     Logs each training step's loss and other metrics to a structured JSON Lines file.
-#     """
-
-#     def __init__(self, log_dir: str, phase: str, model_name: str):
-#         os.makedirs(log_dir, exist_ok=True)
-#         self.log_file = os.path.join(
-#             log_dir, f"{model_name}_{phase}_log.jsonl"
-#         )
-
-#     def on_log(self, args, state, control, logs=None, **kwargs):
-#         if logs is None:
-#             return
-#         with open(self.log_file, "a") as f:
-#             json.dump({"step": state.global_step, **logs}, f)
-#             f.write("\n")
-
 
 def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
     models = [
-        {"name": "vit", "model_id": "google/vit-base-patch16-224", "type": "vit"},
-        {"name": "dinov2", "model_id": "facebook/dinov2-base", "type": "dinov2"},
-        # {"name": "simclr", "model_id": "resnet50", "type": "simclr"},
+        # {"name": "vit", "model_id": "google/vit-base-patch16-224", "type": "vit"},
+        # {"name": "dinov2", "model_id": "facebook/dinov2-base", "type": "dinov2"},
+        {"name": "simclr", "model_id": "resnet50", "type": "simclr"},
     ]
 
     results = {m["name"]: {} for m in models}
@@ -404,10 +243,17 @@ def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
             model = AutoModelForImageClassification.from_pretrained(
                 model_id, num_labels=NUM_FILTERED_CLASSES, ignore_mismatched_sizes=True
             )
-        elif typ == "simclr":
-            model = SimCLRForClassification(
-                timm.create_model("resnet50", pretrained=True, num_classes=0), NUM_FILTERED_CLASSES
+        elif typ == SSL_MODEL:
+            # Load pretrained ResNet50 backbone
+            backbone = timm.create_model(
+                SIMCLR_BACKBONE,
+                pretrained=True,
+                num_classes=0  # Remove classification head
             )
+            # Create SimCLR model with the backbone
+            model = SimCLRForClassification(backbone, NUM_FILTERED_CLASSES)
+            # Freeze the backbone initially
+            freeze_backbone(model, SSL_MODEL)
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device)

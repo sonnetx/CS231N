@@ -1,33 +1,17 @@
 {
-    "vit": {
-        "peak_memory_mb": 3645.1875,
-        "flops_giga": 16.862863872,
-        "train_time_seconds": 235.74563217163086,
-        "eval_time_seconds": 26.343761920928955,
+    "simclr": {
+        "peak_memory_mb": 1003.1875,
+        "flops_giga": 4.131698688,
+        "train_time_seconds": 128.30324125289917,
+        "eval_time_seconds": 25.598750591278076,
         "eval_metrics": {
-            "eval_loss": 0.7079532742500305,
-            "eval_accuracy": 0.48717948717948717,
-            "eval_f1": 0.4701086956521739,
-            "eval_auc": 0.5259697567389876,
-            "eval_runtime": 26.3429,
-            "eval_samples_per_second": 2.961,
-            "eval_steps_per_second": 0.19,
-            "epoch": 1.0
-        }
-    },
-    "dinov2": {
-        "peak_memory_mb": 4721.1875,
-        "flops_giga": 21.963552768,
-        "train_time_seconds": 235.68174862861633,
-        "eval_time_seconds": 26.59509587287903,
-        "eval_metrics": {
-            "eval_loss": 0.872994065284729,
-            "eval_accuracy": 0.4358974358974359,
-            "eval_f1": 0.41711956521739124,
-            "eval_auc": 0.3372781065088758,
-            "eval_runtime": 26.5942,
-            "eval_samples_per_second": 2.933,
-            "eval_steps_per_second": 0.188,
+            "eval_loss": 0.6896047592163086,
+            "eval_accuracy": 0.5512820512820513,
+            "eval_f1": 0.49019607843137253,
+            "eval_auc": 0.5746219592373438,
+            "eval_runtime": 25.5978,
+            "eval_samples_per_second": 3.047,
+            "eval_steps_per_second": 0.195,
             "epoch": 1.0
         }
     }
