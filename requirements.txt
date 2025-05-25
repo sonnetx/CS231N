@@ -19,7 +19,7 @@ kiwisolver==1.4.7
 matplotlib==3.9.2
 matplotlib-inline
 nest_asyncio
-numpy==2.1.1
+numpy
 packaging
 pandas==2.2.3
 parso
@@ -35,7 +35,7 @@ python-dateutil
 pytz==2024.2
 pyzmq
 scikit-learn==1.5.2
-scipy==1.14.1
+scipy
 setuptools==75.1.0
 six
 stack-data

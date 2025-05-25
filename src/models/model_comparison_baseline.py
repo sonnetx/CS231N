@@ -56,6 +56,9 @@ from thop import profile
 # Local Application Imports
 from constants import HF_MODELS, SSL_MODEL, SIMCLR_BACKBONE, NUM_CLASSES
 
+# Constants for this script
+FILTERED_CLASSES = ["0", "1"]  # Classes to use after filtering
+NUM_FILTERED_CLASSES = len(FILTERED_CLASSES)  # Number of classes after filtering
 
 # GPU Memory Monitoring (optional)
 try:
@@ -84,7 +87,7 @@ def env_path(key, default):
 
 
 class JPEGCompressionTransform:
-    def __init__(self, quality):
+    def __init__(self, quality=75):
         self.quality = quality
 
     def __call__(self, img):
@@ -152,7 +155,19 @@ class ISICDataset(Dataset):
         return len(self.dataset)
 
     def __getitem__(self, idx):
-        item = self.dataset[idx]
+        # Convert numpy.int64 to Python int if necessary
+        if isinstance(idx, (np.integer, np.int64)):
+            idx = int(idx)
+            
+        # Handle both direct dataset access and Subset access
+        if hasattr(self.dataset, 'dataset'):
+            # This is a Subset
+            subset_idx = int(self.dataset.indices[idx])  # Convert the index from the indices array
+            item = self.dataset.dataset[subset_idx]
+        else:
+            # This is a direct dataset
+            item = self.dataset[idx]
+            
         image = item["image"]
         label = item["label"]
 
@@ -182,8 +197,11 @@ def compute_metrics(eval_pred, model_name):
     predictions = np.argmax(logits, axis=-1)
     acc = accuracy_score(labels, predictions)
     f1 = f1_score(labels, predictions, average="weighted")
+    
+    # For binary classification, use the probability of the positive class
     probs = torch.softmax(torch.tensor(logits), dim=1).numpy()
-    auc = roc_auc_score(labels, probs, multi_class="ovr")
+    # Use the probability of class 1 (positive class) for ROC AUC
+    auc = roc_auc_score(labels, probs[:, 1])
 
     plot_dir = os.path.join(
         env_path("PLOT_DIR", "."), model_name
@@ -219,7 +237,7 @@ def get_gpu_memory(device_id=0):
 
 
 class SimCLRForClassification(nn.Module):
-    def __init__(self, backbone, num_classes=8):
+    def __init__(self, backbone, num_classes=NUM_FILTERED_CLASSES):
         super().__init__()
         self.backbone = backbone
         self.classifier = nn.Linear(2048, num_classes)
@@ -272,7 +290,7 @@ def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
     models = [
         {"name": "vit", "model_id": "google/vit-base-patch16-224", "type": "vit"},
         {"name": "dinov2", "model_id": "facebook/dinov2-base", "type": "dinov2"},
-        {"name": "simclr", "model_id": "resnet50", "type": "simclr"},
+        # {"name": "simclr", "model_id": "resnet50", "type": "simclr"},
     ]
 
     results = {m["name"]: {} for m in models}
@@ -284,29 +302,41 @@ def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
         split=f"train[:{num_train_images}]",
     )
 
-    # Filter to first two classes and cast labels
-    dataset = dataset.filter(lambda x: x["label"] in [0, 1])
-    dataset = dataset.cast_column("label", ClassLabel(num_classes=2))
+    # Filter to specified classes and cast labels - optimized version
+    print("Filtering dataset for specified classes...")
+    # Get indices of images with desired labels
+    filtered_indices = [
+        i for i, label in enumerate(dataset["label"])
+        if str(label) in FILTERED_CLASSES  # Convert to string for comparison
+    ]
+    # Select only those indices
+    dataset = dataset.select(filtered_indices)
+    print(f"Number of images after filtering for classes {FILTERED_CLASSES}: {len(dataset)}")
+    dataset = dataset.cast_column("label", ClassLabel(num_classes=NUM_FILTERED_CLASSES))
 
-    # Get class counts and balance dataset
-    labels = np.array(dataset["label"])
-    class_0_indices = np.where(labels == 0)[0]
-    class_1_indices = np.where(labels == 1)[0]
-
-    min_class_size = min(len(class_0_indices), len(class_1_indices))
-
-    max_possible_images = min_class_size * 2
-    if num_train_images > max_possible_images:
-        print(f"Note: Requested {num_train_images} images, but only {max_possible_images} "
-              f"images available for balanced dataset with 2 classes. Using {max_possible_images} images.")
-        num_train_images = max_possible_images
-
+    # Get class counts and balance dataset - optimized version
+    print("Balancing dataset...")
+    # Get counts for each class
+    class_counts = {label: 0 for label in FILTERED_CLASSES}
+    for label in dataset["label"]:
+        class_counts[str(label)] += 1  # Convert to string for dictionary key
+    
+    print(f"Class counts: {class_counts}")  # Debug print to verify counts
+    
+    # Calculate how many images to use per class
+    min_class_size = min(class_counts.values())
+    images_per_class = min(num_train_images // 2, min_class_size)
+    
+    # Sample indices for each class
     np.random.seed(42)
-    class_0_sample = np.random.choice(class_0_indices, num_train_images // 2, replace=False)
-    class_1_sample = np.random.choice(class_1_indices, num_train_images // 2, replace=False)
-    balanced_indices = np.concatenate([class_0_sample, class_1_sample])
+    balanced_indices = []
+    for label in FILTERED_CLASSES:
+        class_indices = [i for i, l in enumerate(dataset["label"]) if str(l) == label]  # Convert to string for comparison
+        print(f"Found {len(class_indices)} images for class {label}")  # Debug print
+        sampled_indices = np.random.choice(class_indices, images_per_class, replace=False)
+        balanced_indices.extend(sampled_indices)
+    
     np.random.shuffle(balanced_indices)
-
     balanced_dataset = dataset.select(balanced_indices)
 
     # Split into train and validation
@@ -400,15 +430,15 @@ def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
 
         if typ == "vit":
             model = ViTForImageClassification.from_pretrained(
-                model_id, num_labels=8, ignore_mismatched_sizes=True
+                model_id, num_labels=NUM_FILTERED_CLASSES, ignore_mismatched_sizes=True
             )
         elif typ == "dinov2":
             model = AutoModelForImageClassification.from_pretrained(
-                model_id, num_labels=8, ignore_mismatched_sizes=True
+                model_id, num_labels=NUM_FILTERED_CLASSES, ignore_mismatched_sizes=True
             )
         elif typ == "simclr":
             model = SimCLRForClassification(
-                timm.create_model("resnet50", pretrained=True, num_classes=0), 8
+                timm.create_model("resnet50", pretrained=True, num_classes=0), NUM_FILTERED_CLASSES
             )
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -436,6 +466,7 @@ def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
             save_strategy="epoch",
             load_best_model_at_end=True,
             metric_for_best_model="accuracy",
+            save_total_limit=1,  # Only keep the best model
         )
         
         trainer = Trainer(
@@ -446,7 +477,7 @@ def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
             compute_metrics=lambda pred: compute_metrics(pred, name),
             callbacks=[
                 LossLoggerCallback(
-                    log_dir=os.environ["LOG_DIR"],
+                    log_dir=env_path("LOG_DIR", "./logs"),
                     phase="finetune",
                     model_name=name,
                 )
@@ -484,7 +515,7 @@ def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
                     {
                         "model_type": SSL_MODEL,
                         "backbone": "resnet50",
-                        "num_classes": 8,
+                        "num_classes": NUM_FILTERED_CLASSES,
                     },
                     f,
                 )
@@ -504,15 +535,15 @@ def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
         # ---- LINEAR PROBE PHASE ----
         if typ == "vit":
             model = ViTForImageClassification.from_pretrained(
-                model_id, num_labels=8, ignore_mismatched_sizes=True
+                model_id, num_labels=NUM_FILTERED_CLASSES, ignore_mismatched_sizes=True
             )
         elif typ == "dinov2":
             model = AutoModelForImageClassification.from_pretrained(
-                model_id, num_labels=8, ignore_mismatched_sizes=True
+                model_id, num_labels=NUM_FILTERED_CLASSES, ignore_mismatched_sizes=True
             )
         elif typ == SSL_MODEL:
             backbone = timm.create_model("resnet50", pretrained=True, num_classes=0)
-            model = SimCLRForClassification(backbone, 8)
+            model = SimCLRForClassification(backbone, NUM_FILTERED_CLASSES)
 
         model.to(device)
         freeze_backbone(model, typ)
@@ -535,6 +566,7 @@ def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
             save_strategy="epoch",
             load_best_model_at_end=True,
             metric_for_best_model="accuracy",
+            save_total_limit=1,  # Only keep the best model
         )
 
         trainer = Trainer(
@@ -545,7 +577,7 @@ def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
             compute_metrics=lambda pred: compute_metrics(pred, name),
             callbacks=[
                 LossLoggerCallback(
-                    log_dir=os.environ["LOG_DIR"],
+                    log_dir=env_path("LOG_DIR", "./logs"),
                     phase="linear_probe",
                     model_name=name,
                 )
@@ -580,7 +612,7 @@ def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
                     {
                         "model_type": SSL_MODEL,
                         "backbone": "resnet50",
-                        "num_classes": 8,
+                        "num_classes": NUM_FILTERED_CLASSES,
                     },
                     f,
                 )
