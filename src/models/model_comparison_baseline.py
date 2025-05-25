@@ -54,11 +54,17 @@ import timm
 from thop import profile
 
 # Local Application Imports
-from constants import HF_MODELS, SSL_MODEL, SIMCLR_BACKBONE, NUM_CLASSES
-
-# Constants for this script
-FILTERED_CLASSES = ["0", "1"]  # Classes to use after filtering
-NUM_FILTERED_CLASSES = len(FILTERED_CLASSES)  # Number of classes after filtering
+from utils.constants import HF_MODELS, SSL_MODEL, SIMCLR_BACKBONE, NUM_CLASSES, FILTERED_CLASSES, NUM_FILTERED_CLASSES
+from utils.transforms import (
+    JPEGCompressionTransform,
+    GaussianBlurTransform,
+    ColorQuantizationTransform,
+)
+from utils.util_classes import (
+    ISICDataset,
+    SimCLRForClassification,
+    LossLoggerCallback,
+)
 
 # GPU Memory Monitoring (optional)
 try:
@@ -86,110 +92,72 @@ def env_path(key, default):
     return os.environ.get(key, default)
 
 
-class JPEGCompressionTransform:
-    def __init__(self, quality=75):
-        self.quality = quality
+# class ISICDataset(Dataset):
+#     def __init__(
+#         self,
+#         dataset,
+#         preprocessor=None,
+#         resolution=224,
+#         transform=None,
+#         model_type="vit",
+#         jpeg_quality=None,
+#     ):
+#         self.dataset = dataset
+#         self.preprocessor = preprocessor
+#         self.resolution = resolution
+#         self.transform = transform
+#         self.model_type = model_type
+#         self.jpeg_quality = jpeg_quality
+#         if model_type == "simclr":
+#             self.preprocessor = transforms.Compose(
+#                 [
+#                     transforms.Resize((resolution, resolution)),
+#                     transforms.ToTensor(),
+#                     transforms.Normalize(
+#                         mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+#                     ),
+#                 ]
+#             )
 
-    def __call__(self, img):
-        if not isinstance(img, Image.Image):
-            img = transforms.ToPILImage()(img)
-        buffer = io.BytesIO()
-        img.save(buffer, format="JPEG", quality=self.quality)
-        buffer.seek(0)
-        return Image.open(buffer)
+#     def __len__(self):
+#         return len(self.dataset)
 
-class GaussianBlurTransform:
-    def __init__(self, p=1):
-        self.p = p
-
-    def __call__(self, img):
-        if not isinstance(img, Image.Image):
-            img = transforms.ToPILImage()(img)
-        if random.random() < self.p:
-            kernel_size = random.choice([3, 5, 7])
-            sigma = random.uniform(0.1, 2.0)
-            img = transforms.GaussianBlur(kernel_size=kernel_size, sigma=sigma)(img)
-        return img
-
-class ColorQuantizationTransform:
-    def __init__(self, p=1):
-        self.p = p
-
-    def __call__(self, img):
-        if not isinstance(img, Image.Image):
-            img = transforms.ToPILImage()(img)
-        if random.random() < self.p:
-            num_colors = random.randint(16, 64)
-            img = img.quantize(colors=num_colors, method=Image.Quantize.MAXCOVERAGE).convert("RGB")
-        return img
-
-
-class ISICDataset(Dataset):
-    def __init__(
-        self,
-        dataset,
-        preprocessor=None,
-        resolution=224,
-        transform=None,
-        model_type="vit",
-        jpeg_quality=None,
-    ):
-        self.dataset = dataset
-        self.preprocessor = preprocessor
-        self.resolution = resolution
-        self.transform = transform
-        self.model_type = model_type
-        self.jpeg_quality = jpeg_quality
-        if model_type == "simclr":
-            self.preprocessor = transforms.Compose(
-                [
-                    transforms.Resize((resolution, resolution)),
-                    transforms.ToTensor(),
-                    transforms.Normalize(
-                        mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-                    ),
-                ]
-            )
-
-    def __len__(self):
-        return len(self.dataset)
-
-    def __getitem__(self, idx):
-        # Convert numpy.int64 to Python int if necessary
-        if isinstance(idx, (np.integer, np.int64)):
-            idx = int(idx)
+#     def __getitem__(self, idx):
+#         # Convert numpy.int64 to Python int if necessary
+#         if isinstance(idx, (np.integer, np.int64)):
+#             idx = int(idx)
             
-        # Handle both direct dataset access and Subset access
-        if hasattr(self.dataset, 'dataset'):
-            # This is a Subset
-            subset_idx = int(self.dataset.indices[idx])  # Convert the index from the indices array
-            item = self.dataset.dataset[subset_idx]
-        else:
-            # This is a direct dataset
-            item = self.dataset[idx]
+#         # Handle both direct dataset access and Subset access
+#         if hasattr(self.dataset, 'dataset'):
+#             # This is a Subset
+#             subset_idx = int(self.dataset.indices[idx])  # Convert the index from the indices array
+#             item = self.dataset.dataset[subset_idx]
+#         else:
+#             # This is a direct dataset
+#             item = self.dataset[idx]
             
-        image = item["image"]
-        label = item["label"]
+#         image = item["image"]
+#         label = item["label"]
 
-        if self.resolution != 224:
-            image = image.resize((self.resolution, self.resolution), Image.LANCZOS)
+#         if self.resolution != 224:
+#             image = image.resize((self.resolution, self.resolution), Image.LANCZOS)
 
-        if self.transform:
-            image = self.transform(image)
+#         if self.transform:
+#             image = self.transform(image)
 
-        if self.jpeg_quality is not None:
-            image = JPEGCompressionTransform(self.jpeg_quality)(image)
+#         if self.jpeg_quality is not None:
+#             image = JPEGCompressionTransform(self.jpeg_quality)(image)
 
-        if self.model_type in HF_MODELS:
-            encoding = self.preprocessor(images=image, return_tensors="pt")
-            pixel_values = encoding["pixel_values"].squeeze(0)
-        elif self.model_type == "simclr":
-            pixel_values = self.preprocessor(image)
-        else:
-            raise ValueError(f"Unsupported model_type: {self.model_type}")
+#         if self.model_type in HF_MODELS:
+#             encoding = self.preprocessor(images=image, return_tensors="pt")
+#             pixel_values = encoding["pixel_values"].squeeze(0)
+#         elif self.model_type == "simclr":
+#             pixel_values = self.preprocessor(image)
+#         else:
+#             raise ValueError(f"Unsupported model_type: {self.model_type}")
 
-        label = torch.tensor(label, dtype=torch.long)
-        return {"pixel_values": pixel_values, "labels": label}
+#         label = torch.tensor(label, dtype=torch.long)
+#         return {"pixel_values": pixel_values, "labels": label}
 
 
 def compute_metrics(eval_pred, model_name):
@@ -236,21 +204,21 @@ def get_gpu_memory(device_id=0):
         return -1
 
 
-class SimCLRForClassification(nn.Module):
-    def __init__(self, backbone, num_classes=NUM_FILTERED_CLASSES):
-        super().__init__()
-        self.backbone = backbone
-        self.classifier = nn.Linear(2048, num_classes)
+# class SimCLRForClassification(nn.Module):
+#     def __init__(self, backbone, num_classes=NUM_FILTERED_CLASSES):
+#         super().__init__()
+#         self.backbone = backbone
+#         self.classifier = nn.Linear(2048, num_classes)
 
-    def forward(self, pixel_values, labels=None):
-        features = self.backbone(pixel_values)
-        logits = self.classifier(features)
-        loss = None
-        if labels is not None:
-            loss = nn.CrossEntropyLoss()(logits, labels)
-        return (
-            {"logits": logits, "loss": loss} if loss is not None else {"logits": logits}
-        )
+#     def forward(self, pixel_values, labels=None):
+#         features = self.backbone(pixel_values)
+#         logits = self.classifier(features)
+#         loss = None
+#         if labels is not None:
+#             loss = nn.CrossEntropyLoss()(logits, labels)
+#         return (
+#             {"logits": logits, "loss": loss} if loss is not None else {"logits": logits}
+#         )
 
 
 def freeze_backbone(model, model_type):
@@ -267,23 +235,23 @@ def freeze_backbone(model, model_type):
         raise ValueError(f"Unsupported model_type: {model_type}")
 
 
-class LossLoggerCallback(TrainerCallback):
-    """
-    Logs each training step's loss and other metrics to a structured JSON Lines file.
-    """
+# class LossLoggerCallback(TrainerCallback):
+#     """
+#     Logs each training step's loss and other metrics to a structured JSON Lines file.
+#     """
 
-    def __init__(self, log_dir: str, phase: str, model_name: str):
-        os.makedirs(log_dir, exist_ok=True)
-        self.log_file = os.path.join(
-            log_dir, f"{model_name}_{phase}_log.jsonl"
-        )
+#     def __init__(self, log_dir: str, phase: str, model_name: str):
+#         os.makedirs(log_dir, exist_ok=True)
+#         self.log_file = os.path.join(
+#             log_dir, f"{model_name}_{phase}_log.jsonl"
+#         )
 
-    def on_log(self, args, state, control, logs=None, **kwargs):
-        if logs is None:
-            return
-        with open(self.log_file, "a") as f:
-            json.dump({"step": state.global_step, **logs}, f)
-            f.write("\n")
+#     def on_log(self, args, state, control, logs=None, **kwargs):
+#         if logs is None:
+#             return
+#         with open(self.log_file, "a") as f:
+#             json.dump({"step": state.global_step, **logs}, f)
+#             f.write("\n")
 
 
 def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
