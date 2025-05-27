@@ -8,8 +8,6 @@ This does NOT experiment on JPEG compression levels
 # Environment Setup
 import os
 
-os.environ["WANDB_DISABLED"] = "true"  # Disable Weights & Biases logging
-
 # Standard Libraries
 import io
 import json
@@ -40,6 +38,8 @@ from transformers import (
 )
 from datasets import load_dataset, ClassLabel
 
+# Weights & Biases
+import wandb
 
 # Metrics
 from sklearn.metrics import (
@@ -75,7 +75,6 @@ from utils.util_methods import (
 # GPU Memory Monitoring (optional)
 try:
     import pynvml
-
     pynvml.nvmlInit()
     GPU_AVAILABLE = True
 except ImportError:
@@ -91,13 +90,63 @@ os.environ["HF_DATASETS_CACHE"] = os.getenv(
 )
 os.environ["HF_HOME"] = os.getenv("HF_HOME", "~/.cache/huggingface")
 
-    
+class WandbCallback(TrainerCallback):
+    def __init__(self, model_name, phase):
+        self.model_name = model_name
+        self.phase = phase
+        self.best_accuracy = 0.0
 
-def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if logs is not None:
+            # Add model name and phase to logs
+            logs["model"] = self.model_name
+            logs["phase"] = self.phase
+            
+            # Track GPU memory if available
+            if GPU_AVAILABLE:
+                logs["gpu_memory_mb"] = get_gpu_memory()
+            
+            # Log to wandb
+            wandb.log(logs)
+
+    def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+        if metrics is not None:
+            # Track best accuracy
+            if "eval_accuracy" in metrics:
+                self.best_accuracy = max(self.best_accuracy, metrics["eval_accuracy"])
+                metrics["best_accuracy"] = self.best_accuracy
+            
+            # Log evaluation metrics
+            wandb.log(metrics)
+
+def main(num_train_images=5000, proportion_per_transform=0.2, resolution=224):
+    
+    # Simple batch size configuration
+    batch_size = 64
+    
+    # Initialize wandb
+    wandb_config = {
+        "num_train_images": num_train_images,
+        "proportion_per_transform": proportion_per_transform,
+        "resolution": resolution,
+        "batch_size": batch_size,
+        "num_epochs": 3,
+        "warmup_steps": 500,
+        "weight_decay": 0.01,
+        "gpu_available": GPU_AVAILABLE,
+    }
+    
+    wandb.init(
+        entity="ericcui-use-stanford-university",
+        project="CS231N Test",
+        config=wandb_config,
+        tags=["baseline", "model-comparison"]
+    )
+
     models = [
-        # {"name": "vit", "model_id": "google/vit-base-patch16-224", "type": "vit"},
+        {"name": "vit", "model_id": "google/vit-base-patch16-224", "type": "vit"},
         # {"name": "dinov2", "model_id": "facebook/dinov2-base", "type": "dinov2"},
-        {"name": "simclr", "model_id": "resnet50", "type": "simclr"},
+        # {"name": "simclr", "model_id": "resnet50", "type": "simclr"},
     ]
 
     results = {m["name"]: {} for m in models}
@@ -116,6 +165,7 @@ def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
         i for i, label in enumerate(dataset["label"])
         if str(label) in FILTERED_CLASSES  # Convert to string for comparison
     ]
+    
     # Select only those indices
     dataset = dataset.select(filtered_indices)
     print(f"Number of images after filtering for classes {FILTERED_CLASSES}: {len(dataset)}")
@@ -270,8 +320,8 @@ def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
         train_args = TrainingArguments(
             output_dir=os.path.join(env_path("TRAIN_OUTPUT_DIR", "."), f"{name}"),
             num_train_epochs=3,
-            per_device_train_batch_size=16,
-            per_device_eval_batch_size=16,
+            per_device_train_batch_size=batch_size,
+            per_device_eval_batch_size=batch_size,
             warmup_steps=500,
             weight_decay=0.01,
             logging_dir=os.path.join(env_path("LOG_DIR", "."), f"{name}"),
@@ -294,13 +344,20 @@ def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
                     log_dir=env_path("LOG_DIR", "./logs"),
                     phase="finetune",
                     model_name=name,
-                )
+                ),
+                WandbCallback(name, "finetune"),
             ],
         )
 
         # ---- TRAINING PHASE ----
         start_time = time.time()
         peak_memory = get_gpu_memory() if GPU_AVAILABLE else -1
+
+        # Log model architecture
+        if typ in HF_MODELS:
+            wandb.watch(model, log="all", log_freq=100)
+        elif typ == SSL_MODEL:
+            wandb.watch(model.backbone, log="all", log_freq=100)
 
         trainer.train()
 
@@ -311,6 +368,18 @@ def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
         eval_results = trainer.evaluate()
         eval_time = time.time() - eval_start_time
         train_time = time.time() - start_time - eval_time
+
+        # Log model-specific metrics
+        model_metrics = {
+            "model_name": name,
+            "model_type": typ,
+            "peak_memory_mb": peak_memory,
+            "flops_giga": flops,
+            "train_time_seconds": train_time,
+            "eval_time_seconds": eval_time,
+            "eval_metrics": eval_results,
+        }
+        wandb.log(model_metrics)
 
         model_dir = os.path.join(
             env_path("MODEL_DIR", "."), f"{name}"
@@ -334,19 +403,30 @@ def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
                     f,
                 )
 
-        results[name] = {
-            "peak_memory_mb": peak_memory,
-            "flops_giga": flops,
-            "train_time_seconds": train_time,
-            "eval_time_seconds": eval_time,
-            "eval_metrics": eval_results,
-        }
+        # Save model as wandb artifact
+        artifact = wandb.Artifact(
+            name=f"{name}_model",
+            type="model",
+            description=f"Trained {name} model with {typ} architecture"
+        )
+        artifact.add_dir(model_dir)
+        wandb.log_artifact(artifact)
+
+        results[name] = model_metrics
 
         print(
             f"[Finetune] {name}: {results[name]}"
         )
 
         # ---- LINEAR PROBE PHASE ----
+        # Create a new wandb run for linear probe
+        wandb.init(
+            project="model-comparison-baseline",
+            config=wandb_config,
+            tags=["baseline", "model-comparison", "linear-probe"],
+            name=f"{name}_linear_probe"
+        )
+
         if typ == "vit":
             model = ViTForImageClassification.from_pretrained(
                 model_id, num_labels=NUM_FILTERED_CLASSES, ignore_mismatched_sizes=True
@@ -362,14 +442,20 @@ def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
         model.to(device)
         freeze_backbone(model, typ)
 
+        # Log model architecture for linear probe
+        if typ in HF_MODELS:
+            wandb.watch(model, log="all", log_freq=100)
+        elif typ == SSL_MODEL:
+            wandb.watch(model.backbone, log="all", log_freq=100)
+
         linear_args = TrainingArguments(
             output_dir=os.path.join(
                 env_path("TRAIN_OUTPUT_DIR", "."),
                 f"{name}_linear_probe",
             ),
             num_train_epochs=1,
-            per_device_train_batch_size=16,
-            per_device_eval_batch_size=16,
+            per_device_train_batch_size=batch_size,
+            per_device_eval_batch_size=batch_size,
             warmup_steps=100,
             weight_decay=0.01,
             logging_dir=os.path.join(
@@ -394,7 +480,8 @@ def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
                     log_dir=env_path("LOG_DIR", "./logs"),
                     phase="linear_probe",
                     model_name=name,
-                )
+                ),
+                WandbCallback(name, "linear_probe"),
             ],
         )
 
@@ -408,6 +495,19 @@ def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
         eval_results = trainer.evaluate()
         eval_time = time.time() - eval_start_time
         train_time = time.time() - start_time - eval_time
+
+        # Log linear probe metrics
+        linear_probe_metrics = {
+            "model_name": name,
+            "model_type": typ,
+            "phase": "linear_probe",
+            "peak_memory_mb": peak_memory,
+            "flops_giga": flops,
+            "train_time_seconds": train_time,
+            "eval_time_seconds": eval_time,
+            "eval_metrics": eval_results,
+        }
+        wandb.log(linear_probe_metrics)
 
         model_dir = os.path.join(
             env_path("MODEL_DIR", "."), f"{name}_linear_probe"
@@ -431,17 +531,26 @@ def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
                     f,
                 )
 
-        results_linear_probe[name] = {
-            "peak_memory_mb": peak_memory,
-            "flops_giga": flops,
-            "train_time_seconds": train_time,
-            "eval_time_seconds": eval_time,
-            "eval_metrics": eval_results,
-        }
+        # Save linear probe model as wandb artifact
+        artifact = wandb.Artifact(
+            name=f"{name}_linear_probe_model",
+            type="model",
+            description=f"Linear probe {name} model with {typ} architecture"
+        )
+        artifact.add_dir(model_dir)
+        wandb.log_artifact(artifact)
+
+        results_linear_probe[name] = linear_probe_metrics
 
         print(
             f"[LinearProbe] {name}: {results_linear_probe[name]}"
         )
+
+        # Close the wandb run for linear probe
+        wandb.finish()
+
+    # Close the main wandb run
+    wandb.finish()
 
     with open(
         os.path.join(

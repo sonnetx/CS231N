@@ -1,18 +1,24 @@
 {
-    "simclr": {
-        "peak_memory_mb": 989.1875,
-        "flops_giga": 4.131698688,
-        "train_time_seconds": 417.5733857154846,
-        "eval_time_seconds": 25.519327640533447,
+    "vit": {
+        "model_name": "vit",
+        "model_type": "vit",
+        "peak_memory_mb": 3645.1875,
+        "flops_giga": 16.862863872,
+        "train_time_seconds": 454.5931091308594,
+        "eval_time_seconds": 33.34872579574585,
         "eval_metrics": {
-            "eval_loss": 0.6880730390548706,
-            "eval_accuracy": 0.6410256410256411,
-            "eval_f1": 0.6350267379679144,
-            "eval_auc": 0.6370808678500987,
-            "eval_runtime": 25.5184,
-            "eval_samples_per_second": 3.057,
-            "eval_steps_per_second": 0.196,
-            "epoch": 3.0
+            "eval_loss": 0.6044296026229858,
+            "eval_accuracy": 0.7435897435897436,
+            "eval_f1": 0.7420634920634921,
+            "eval_auc": 0.8060486522024982,
+            "eval_runtime": 33.3459,
+            "eval_samples_per_second": 2.339,
+            "eval_steps_per_second": 0.15,
+            "epoch": 3.0,
+            "model": "vit",
+            "phase": "finetune",
+            "gpu_memory_mb": 3645.1875,
+            "best_accuracy": 0.7435897435897436
         }
     }
 }

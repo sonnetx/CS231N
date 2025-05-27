@@ -18,6 +18,9 @@ simclr_linear_probe/
 **/rng_state.pth
 **/training_args.bin
 
+# Weights & Biases
+wandb/
+
 # Python
 __pycache__/
 *.py[cod]
