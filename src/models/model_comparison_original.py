@@ -55,7 +55,7 @@ import timm
 from thop import profile
 
 # Local Application Imports
-from utils.constants import HF_MODELS, SSL_MODEL, SIMCLR_BACKBONE, NUM_CLASSES, FILTERED_CLASSES, NUM_FILTERED_CLASSES
+from utils.constants import HF_MODELS, SSL_MODEL, SIMCLR_BACKBONE, NUM_FILTERED_CLASSES
 from utils.transforms import (
     JPEGCompressionTransform,
     GaussianBlurTransform,
