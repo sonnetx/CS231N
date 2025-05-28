@@ -93,7 +93,7 @@ os.environ["HF_HOME"] = os.getenv("HF_HOME", "~/.cache/huggingface")
 
     
 
-def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
+def main(num_dataset_images=1000, proportion_per_transform=0.2, resolution=224):
     models = [
         # {"name": "vit", "model_id": "google/vit-base-patch16-224", "type": "vit"},
         # {"name": "dinov2", "model_id": "facebook/dinov2-base", "type": "dinov2"},
@@ -106,7 +106,7 @@ def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
     dataset = load_dataset(
         "MKZuziak/ISIC_2019_224",
         cache_dir=os.environ["HF_DATASETS_CACHE"],
-        split=f"train[:{num_train_images}]",
+        split=f"train[:{num_dataset_images}]",
     )
 
     # Filter to specified classes and cast labels - optimized version
@@ -132,7 +132,7 @@ def main(num_train_images=1000, proportion_per_transform=0.2, resolution=224):
     
     # Calculate how many images to use per class
     min_class_size = min(class_counts.values())
-    images_per_class = min(num_train_images // 2, min_class_size)
+    images_per_class = min(num_dataset_images // 2, min_class_size)
     
     # Sample indices for each class
     np.random.seed(42)
