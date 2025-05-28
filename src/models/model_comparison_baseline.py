@@ -106,11 +106,11 @@ def main(num_dataset_images=1000, proportion_per_transform=0.2, resolution=224):
     dataset = load_dataset(
         "MKZuziak/ISIC_2019_224",
         cache_dir=os.environ["HF_DATASETS_CACHE"],
-        split=f"train[:{num_dataset_images}]",
+        split="train",
     )
 
-    # Filter to specified classes and cast labels - optimized version
-    print("Filtering dataset for specified classes...")
+    print(f"Initial dataset size: {len(dataset)} images")
+
     # Get indices of images with desired labels
     filtered_indices = [
         i for i, label in enumerate(dataset["label"])
