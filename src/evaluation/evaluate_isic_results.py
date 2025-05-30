@@ -1,9 +1,8 @@
 """
 Evaluates results from ISIC 2019 fine-tuning and linear probing experiments.
-Conducts paired t-tests to assess statistical significance across JPEG quality levels
-and model variations, requiring multiple runs. For single runs, skips t-tests and
-summarizes perform ance. Evaluates performance under degradation settings (JPEG
-qualities 90, 50, 20). Generates plots and saves results to JSON.
+Conducts paired t-tests to assess statistical significance across resolutions
+and model variations. For single runs, skips t-tests and
+summarizes perform ance. Generates plots and saves results to JSON.
 """
 # pylint: disable=broad-exception-caught
 
@@ -53,7 +52,7 @@ def load_results(
 
 def paired_t_tests(metrics, models, qualities, modes):
     """
-    Conducts paired t-tests across JPEG qualities, models, and modes if multiple
+    Conducts paired t-tests across models and modes if multiple
     runs are available.
     """
     t_test_results = []
@@ -128,7 +127,6 @@ def summarize_performance(metrics):
         summary.append(
             {
                 "model": model,
-                "jpeg_quality": quality,
                 "mode": mode,
                 "accuracy_mean": np.mean(accuracies),
                 "accuracy_std": np.std(accuracies, ddof=1) if len(runs) > 1 else 0,
@@ -142,7 +140,7 @@ def summarize_performance(metrics):
 
 
 def plot_performance(df):
-    """Generates plots for performance metrics across JPEG qualities and models."""
+    """Generates plots for performance metrics across models."""
     metrics = ["accuracy", "f1", "auc"]
     modes = ["finetune", "linear_probe"]
 
