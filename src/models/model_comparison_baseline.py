@@ -182,7 +182,7 @@ def main(num_train_images=5000, proportion_per_transform=0.2, resolution=224):
     
     # Calculate how many images to use per class
     min_class_size = min(class_counts.values())
-    images_per_class = min(num_dataset_images // 2, min_class_size)
+    images_per_class = min(num_train_images // 2, min_class_size)
     
     # Sample indices for each class
     np.random.seed(42)
