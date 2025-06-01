@@ -8,10 +8,14 @@
 #SBATCH --mem=128G
 
 
-ml python/3.12
+# Loading python 3.9.0
+module --force purge
+ml python/3.9.0
+
+# Creating venv and installing requirements
 python3 -m venv venv      
 source venv/bin/activate
-
 pip install -r /home/groups/roxanad/eric/CS231N/requirements.txt
 
+# Running the script
 python3 src/models/model_comparison_baseline.py
