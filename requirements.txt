@@ -1,6 +1,7 @@
 annotated-types
 anyio
 asttokens
+accelerate
 beautifulsoup4
 biopython
 certifi

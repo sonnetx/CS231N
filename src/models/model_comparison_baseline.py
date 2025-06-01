@@ -124,7 +124,7 @@ class WandbCallback(TrainerCallback):
 def main(num_train_images=5000, proportion_per_transform=0.2, resolution=224):
     
     # Simple batch size configuration
-    batch_size = 72
+    batch_size = 256
     
     # Initialize wandb
     wandb_config = {
@@ -147,8 +147,8 @@ def main(num_train_images=5000, proportion_per_transform=0.2, resolution=224):
 
     models = [
         {"name": "vit", "model_id": "google/vit-base-patch16-224", "type": "vit"},
-        # {"name": "dinov2", "model_id": "facebook/dinov2-base", "type": "dinov2"},
-        # {"name": "simclr", "model_id": "resnet50", "type": "simclr"},
+        {"name": "dinov2", "model_id": "facebook/dinov2-base", "type": "dinov2"},
+        {"name": "simclr", "model_id": "resnet50", "type": "simclr"},
     ]
 
     results = {m["name"]: {} for m in models}
