@@ -9,7 +9,7 @@
 
 
 # Loading python version
-ml python/3.9.0
+ml python/3.12
 
 # Creating venv and installing requirements
 python3 -m venv venv      
