@@ -1,25 +1,5 @@
 {
-    "vit": {
-        "model_name": "vit",
-        "model_type": "vit",
-        "phase": "linear_probe",
-        "peak_memory_mb": 10101.1875,
-        "flops_giga": 16.862863872,
-        "train_time_seconds": 1723.9549779891968,
-        "eval_time_seconds": 341.1991648674011,
-        "eval_metrics": {
-            "eval_loss": 0.6634082198143005,
-            "eval_accuracy": 0.597,
-            "eval_f1": 0.5917875350348601,
-            "eval_auc": 0.636452,
-            "eval_runtime": 341.1969,
-            "eval_samples_per_second": 2.931,
-            "eval_steps_per_second": 0.041,
-            "epoch": 1.0,
-            "model": "vit",
-            "phase": "linear_probe",
-            "gpu_memory_mb": 1809.1875,
-            "best_accuracy": 0.597
-        }
-    }
+    "vit": {},
+    "dinov2": {},
+    "simclr": {}
 }

@@ -2,23 +2,67 @@
     "vit": {
         "model_name": "vit",
         "model_type": "vit",
-        "peak_memory_mb": 10101.1875,
+        "peak_memory_mb": 9193.1875,
         "flops_giga": 16.862863872,
-        "train_time_seconds": 5414.4866778850555,
-        "eval_time_seconds": 342.1253128051758,
+        "train_time_seconds": 309.12575483322144,
+        "eval_time_seconds": 7.088656663894653,
         "eval_metrics": {
-            "eval_loss": 0.3993283212184906,
-            "eval_accuracy": 0.815,
-            "eval_f1": 0.8149687297153219,
-            "eval_auc": 0.8991039999999999,
-            "eval_runtime": 342.1228,
-            "eval_samples_per_second": 2.923,
-            "eval_steps_per_second": 0.041,
+            "eval_loss": 0.6714684367179871,
+            "eval_accuracy": 0.55,
+            "eval_f1": 0.5488721804511277,
+            "eval_auc": 0.5900000000000001,
+            "eval_runtime": 7.0867,
+            "eval_samples_per_second": 2.822,
+            "eval_steps_per_second": 0.141,
             "epoch": 3.0,
             "model": "vit",
             "phase": "finetune",
-            "gpu_memory_mb": 10101.1875,
-            "best_accuracy": 0.815
+            "gpu_memory_mb": 9193.1875,
+            "best_accuracy": 0.55
+        }
+    },
+    "dinov2": {
+        "model_name": "dinov2",
+        "model_type": "dinov2",
+        "peak_memory_mb": 12919.1875,
+        "flops_giga": 21.963552768,
+        "train_time_seconds": 279.9971594810486,
+        "eval_time_seconds": 7.140540599822998,
+        "eval_metrics": {
+            "eval_loss": 0.7569020390510559,
+            "eval_accuracy": 0.55,
+            "eval_f1": 0.5488721804511277,
+            "eval_auc": 0.49,
+            "eval_runtime": 7.1384,
+            "eval_samples_per_second": 2.802,
+            "eval_steps_per_second": 0.14,
+            "epoch": 3.0,
+            "model": "dinov2",
+            "phase": "finetune",
+            "gpu_memory_mb": 12919.1875,
+            "best_accuracy": 0.55
+        }
+    },
+    "simclr": {
+        "model_name": "simclr",
+        "model_type": "simclr",
+        "peak_memory_mb": 12925.1875,
+        "flops_giga": 4.131698688,
+        "train_time_seconds": 290.4693319797516,
+        "eval_time_seconds": 6.834140062332153,
+        "eval_metrics": {
+            "eval_loss": 0.6978890299797058,
+            "eval_accuracy": 0.45,
+            "eval_f1": 0.4373401534526854,
+            "eval_auc": 0.41999999999999993,
+            "eval_runtime": 6.832,
+            "eval_samples_per_second": 2.927,
+            "eval_steps_per_second": 0.146,
+            "epoch": 3.0,
+            "model": "simclr",
+            "phase": "finetune",
+            "gpu_memory_mb": 2021.1875,
+            "best_accuracy": 0.45
         }
     }
 }
