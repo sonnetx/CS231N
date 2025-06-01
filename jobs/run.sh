@@ -8,7 +8,7 @@
 #SBATCH --mem=128G
 
 
-ml python/3.11
+ml python/3.12
 python3 -m venv venv      
 source venv/bin/activate
 
