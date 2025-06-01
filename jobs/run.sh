@@ -8,10 +8,10 @@
 #SBATCH --mem=128G
 
 
-ml python/3.12
+ml python/3.9
 python3 -m venv venv      
 source venv/bin/activate
 
 pip install -r /home/groups/roxanad/eric/CS231N/requirements.txt
 
-python3 model_comparison_baseline.py
+python3 src/models/model_comparison_baseline.py
