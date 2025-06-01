@@ -8,8 +8,7 @@
 #SBATCH --mem=128G
 
 
-# Loading python 3.9.0
-module --force purge
+# Loading python version
 ml python/3.9.0
 
 # Creating venv and installing requirements
