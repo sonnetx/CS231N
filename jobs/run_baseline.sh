@@ -15,26 +15,27 @@
 ###############################################################################
 set -euo pipefail
 
-# ---- 1.  Load the Python version that actually exists on Sherlock ----
-PYTHON_MOD=python/3.9.0          # ← from `module spider python`
-module load "${PYTHON_MOD}"  || { echo "❌ Could not load ${PYTHON_MOD}"; exit 1; }
+# ---- 1.  Load the Python module that actually exists on Sherlock ----------
+module load python/3.9.0        || { echo "❌ Could not load python/3.9.0"; exit 1; }
 
-# ---- 2.  CUDA & cuDNN modules supplied by the cluster ---------------
-module load cuda/12.2 cudnn/9    # adjust if Sherlock uses different names
+# (Optional) GPU libraries that the cluster provides
+module load cuda/12.2 cudnn/9    # adjust if versions differ
+
+# Capture the module’s interpreter so we don’t accidentally call /usr/bin/python
+PY=python3                       # everything below uses this variable
 
 ###############################################################################
 # Virtual-env creation + dependencies
 ###############################################################################
-python -m venv venv
+$PY -m venv venv                 # <-- now runs the module’s python3
 source venv/bin/activate
 pip install --upgrade pip
 
-# If your requirements pin cuDNN, drop that line because the module already
-# provides the libraries; leaving it in can break the install.
+# Remove any hard-pinned cuDNN wheel; cluster libs already supply it
 grep -v '^nvidia-cudnn-cu12' requirements.txt | \
     pip install --no-cache-dir -r /dev/stdin
 
 ###############################################################################
-# Launch training / evaluation
+# Launch your script
 ###############################################################################
-python src/models/model_comparison_baseline.py
+$PY src/models/model_comparison_baseline.py
