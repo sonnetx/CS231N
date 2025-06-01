@@ -16,5 +16,8 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r /home/groups/roxanad/eric/CS231N/requirements.txt
 
+# WANDB Key
+export WANDB_API_KEY="7ab80eeb87ef06298c6bca1258208b1739ad32fe"
+
 # Running the script
 python3 src/models/model_comparison_baseline.py
