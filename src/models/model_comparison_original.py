@@ -41,6 +41,7 @@ from transformers import (
 )
 from datasets import load_dataset, ClassLabel
 
+import wandb
 
 # Metrics
 from sklearn.metrics import (
@@ -92,6 +93,7 @@ os.environ["HF_DATASETS_CACHE"] = os.getenv(
 )
 os.environ["HF_HOME"] = os.getenv("HF_HOME", "~/.cache/huggingface")
 
+wandb.login(key=os.getenv("WANDB_API_KEY", ""))
     
 class CustomISICDataset(Dataset):
     def __init__(self, image_dir, label_file=None, transform=None, num_images=None, labels=["MEL", "NV"]):

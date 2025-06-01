@@ -90,6 +90,8 @@ os.environ["HF_DATASETS_CACHE"] = os.getenv(
 )
 os.environ["HF_HOME"] = os.getenv("HF_HOME", "~/.cache/huggingface")
 
+wandb.login(key=os.getenv("WANDB_API_KEY", ""))
+
 class WandbCallback(TrainerCallback):
     def __init__(self, model_name, phase):
         self.model_name = model_name
