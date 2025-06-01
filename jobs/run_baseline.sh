@@ -5,36 +5,36 @@
 #SBATCH --job-name=231n_job
 #SBATCH --partition=roxanad
 #SBATCH --gres=gpu:1
-#SBATCH --time=2-23:59:00            # 2 days + 23:59 hrs
+#SBATCH --time=2-23:59:00
 #SBATCH --mem=128G
 #SBATCH --output=job_output_%j.out
-#SBATCH --chdir=/home/groups/roxanad/eric/CS231N   # run from repo root
+#SBATCH --chdir=/home/groups/roxanad/eric/CS231N   # repo root
 
 ###############################################################################
 # Environment setup
 ###############################################################################
-set -euo pipefail                            # stop on first error
+set -euo pipefail
 
-# 1) Use Python 3.11 (wheels for numpy, PyTorch/TensorFlow, etc. exist)
-module load python/3.11
+# ---- 1.  Load the Python version that actually exists on Sherlock ----
+PYTHON_MOD=python/3.9.0          # ← from `module spider python`
+module load "${PYTHON_MOD}"  || { echo "❌ Could not load ${PYTHON_MOD}"; exit 1; }
 
-# 2) (Optional) Load cluster-provided CUDA/cuDNN so you don’t need to
-#    pin nvidia-cudnn-cu12 in requirements.txt.  Comment out if not needed.
-module load cuda/12.2 cudnn/9
+# ---- 2.  CUDA & cuDNN modules supplied by the cluster ---------------
+module load cuda/12.2 cudnn/9    # adjust if Sherlock uses different names
 
 ###############################################################################
-# Virtual-env creation + deps
+# Virtual-env creation + dependencies
 ###############################################################################
 python -m venv venv
 source venv/bin/activate
-
 pip install --upgrade pip
 
-# If your requirements.txt hard-pins “nvidia-cudnn-cu12==…”, filter it out
-# because the cluster module already supplies cuDNN.
-grep -v '^nvidia-cudnn-cu12' requirements.txt | pip install --no-cache-dir -r /dev/stdin
+# If your requirements pin cuDNN, drop that line because the module already
+# provides the libraries; leaving it in can break the install.
+grep -v '^nvidia-cudnn-cu12' requirements.txt | \
+    pip install --no-cache-dir -r /dev/stdin
 
 ###############################################################################
-# Launch your training / evaluation script
+# Launch training / evaluation
 ###############################################################################
 python src/models/model_comparison_baseline.py
