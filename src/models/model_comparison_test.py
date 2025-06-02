@@ -122,7 +122,7 @@ class WandbCallback(TrainerCallback):
 def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224):
     
     # Simple batch size configuration
-    batch_size = 256
+    batch_size = 250
     
     # Initialize wandb config
     wandb_config = {
