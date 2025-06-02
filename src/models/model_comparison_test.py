@@ -140,17 +140,17 @@ def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224):
     }
 
     models = [
-        {"name": "vit", "model_id": "google/vit-base-patch16-224", "type": "vit", "config": {
-            "image_size": resolution,
-            "patch_size": 16,
-            "num_labels": NUM_FILTERED_CLASSES,
-            "ignore_mismatched_sizes": True
-        }},
-        # {"name": "dinov2", "model_id": "facebook/dinov2-base", "type": "dinov2", "config": {
+        # {"name": "vit", "model_id": "google/vit-base-patch16-224", "type": "vit", "config": {
         #     "image_size": resolution,
+        #     "patch_size": 16,
         #     "num_labels": NUM_FILTERED_CLASSES,
         #     "ignore_mismatched_sizes": True
         # }},
+        {"name": "dinov2", "model_id": "facebook/dinov2-base", "type": "dinov2", "config": {
+            "image_size": resolution,
+            "num_labels": NUM_FILTERED_CLASSES,
+            "ignore_mismatched_sizes": True
+        }},
         # {"name": "simclr", "model_id": "resnet50", "type": "simclr", "config": {
         #     "img_size": resolution
         # }},
