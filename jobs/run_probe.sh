@@ -1,11 +1,11 @@
 #!/bin/bash
-
-#SBATCH --job-name=231n_job
-#SBATCH --time=2-23:59:00
-#SBATCH --output=job_output_%j.out
-#SBATCH --gres=gpu:1
-#SBATCH -p roxanad
-#SBATCH --mem=128G
+#SBATCH --job-name=img_probe
+#SBATCH --output=logs/img_probe_%j.log
+#SBATCH --error=logs/img_probe_%j.err
+#SBATCH --time=01:00:00
+#SBATCH --mem=4G
+#SBATCH --cpus-per-task=1
+#SBATCH --partition=short
 
 
 # Loading python version
