@@ -5,7 +5,7 @@
 #SBATCH --output=job_output_%j.out
 #SBATCH --gres=gpu:1
 #SBATCH -p roxanad
-#SBATCH --mem=256G
+#SBATCH --mem=128G
 
 
 # Loading python version

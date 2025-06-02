@@ -8,6 +8,9 @@ This does NOT experiment on JPEG compression levels
 # Environment Setup
 import os
 
+# Set memory optimization
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 # Standard Libraries
 import io
 import json
@@ -121,8 +124,8 @@ class WandbCallback(TrainerCallback):
 
 def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224):
     
-    # Simple batch size configuration
-    batch_size = 256
+    # Reduce batch size for memory efficiency
+    batch_size = 64  # Reduced from 256
     
     # Initialize wandb config
     wandb_config = {
@@ -350,6 +353,7 @@ def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224):
             num_train_epochs=3,
             per_device_train_batch_size=batch_size,
             per_device_eval_batch_size=batch_size,
+            gradient_accumulation_steps=4,  # Added gradient accumulation
             warmup_steps=500,
             weight_decay=0.01,
             logging_dir=os.path.join(env_path("LOG_DIR", "."), f"{name}"),
