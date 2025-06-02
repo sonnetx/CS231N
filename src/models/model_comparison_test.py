@@ -119,7 +119,7 @@ class WandbCallback(TrainerCallback):
             # Log evaluation metrics
             wandb.log(metrics)
 
-def main(num_train_images=25000, proportion_per_transform=0.2, resolution=112):
+def main(num_train_images=25000, proportion_per_transform=0.2, resolution=56):
     
     # Simple batch size configuration
     batch_size = 256
