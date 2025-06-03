@@ -263,7 +263,7 @@ def main(num_train_images=100, proportion_per_transform=0.2, resolution=224, bat
         wandb.init(
             entity="ericcui-use-stanford-university",
             project="CS231N Test",
-            name=f"{name}_{resolution}_finetune",
+            name=f"{name}_{resolution}_{num_epochs}_epochs_finetune",
             config={**wandb_config, "model_config": config},
             tags=["baseline", "model-comparison", "finetune", name, f"res_{resolution}"],
             reinit=True
