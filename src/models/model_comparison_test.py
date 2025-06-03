@@ -123,10 +123,7 @@ class WandbCallback(TrainerCallback):
             # Log evaluation metrics
             wandb.log(metrics)
 
-def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224, batch_size=128):
-    
-    # Set batch size from argument
-    # batch_size is now a parameter
+def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224, batch_size=64):
     
     # Initialize wandb config
     wandb_config = {
@@ -147,14 +144,14 @@ def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224, b
             "num_labels": NUM_FILTERED_CLASSES,
             "ignore_mismatched_sizes": True
         }},
-        # {"name": "dinov2", "model_id": "facebook/dinov2-base", "type": "dinov2", "config": {
-        #     "image_size": resolution,
-        #     "num_labels": NUM_FILTERED_CLASSES,
-        #     "ignore_mismatched_sizes": True
-        # }},
-        # {"name": "simclr", "model_id": "resnet50", "type": "simclr", "config": {
-        #     "img_size": resolution
-        # }},
+        {"name": "dinov2", "model_id": "facebook/dinov2-base", "type": "dinov2", "config": {
+            "image_size": resolution,
+            "num_labels": NUM_FILTERED_CLASSES,
+            "ignore_mismatched_sizes": True
+        }},
+        {"name": "simclr", "model_id": "resnet50", "type": "simclr", "config": {
+            "img_size": resolution
+        }},
     ]
 
     results = {m["name"]: {} for m in models}
@@ -505,5 +502,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Model comparison script for image classification.")
     parser.add_argument('--resolution', type=int, default=224, help='Input image resolution (default: 224)')
     parser.add_argument('--batch_size', type=int, default=128, help='Batch size for training and evaluation (default: 128)')
+    parser.add_argument('--num_train_images', type=int, default=500, help='Number of training images to use per class (default: 25000)')
     args = parser.parse_args()
-    main(resolution=args.resolution, batch_size=args.batch_size)
+    main(resolution=args.resolution, batch_size=args.batch_size, num_train_images=args.num_train_images)
