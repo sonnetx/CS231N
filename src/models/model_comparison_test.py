@@ -16,6 +16,7 @@ import io
 import json
 import random
 import time
+import argparse
 
 # Scientific & Visualization Libraries
 import numpy as np
@@ -122,10 +123,10 @@ class WandbCallback(TrainerCallback):
             # Log evaluation metrics
             wandb.log(metrics)
 
-def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224):
+def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224, batch_size=128):
     
-    # Set batch size to 128
-    batch_size = 128  # Changed from 64
+    # Set batch size from argument
+    # batch_size is now a parameter
     
     # Initialize wandb config
     wandb_config = {
@@ -500,4 +501,8 @@ def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224):
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Model comparison script for image classification.")
+    parser.add_argument('--resolution', type=int, default=224, help='Input image resolution (default: 224)')
+    parser.add_argument('--batch_size', type=int, default=128, help='Batch size for training and evaluation (default: 128)')
+    args = parser.parse_args()
+    main(resolution=args.resolution, batch_size=args.batch_size)
