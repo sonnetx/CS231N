@@ -354,6 +354,7 @@ def main(num_train_images=100, proportion_per_transform=0.2, resolution=224, bat
             weight_decay=0.01,
             logging_dir=os.path.join(env_path("LOG_DIR", "."), f"{name}"),
             logging_steps=1,
+            eval_strategy="steps",  # Explicitly set evaluation strategy to steps
             eval_steps=eval_steps,  # Evaluate every eval_steps steps
             save_strategy="steps",  # Save based on steps instead of epochs
             save_steps=eval_steps,  # Save at the same frequency as evaluation
