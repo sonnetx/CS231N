@@ -133,7 +133,7 @@ def main(num_train_images=100, proportion_per_transform=0.2, resolution=224, bat
         "batch_size": batch_size,
         "num_epochs": num_epochs,
         "eval_steps": eval_steps,
-        "warmup_steps": 150,
+        "warmup_steps": 200,
         "weight_decay": 0.01,
         "gpu_available": GPU_AVAILABLE,
     }
