@@ -123,7 +123,7 @@ class WandbCallback(TrainerCallback):
             # Log evaluation metrics
             wandb.log(metrics)
 
-def main(num_train_images=100, proportion_per_transform=0.2, resolution=224, batch_size=512, num_epochs=3):
+def main(num_train_images=100, proportion_per_transform=0.2, resolution=224, batch_size=256, num_epochs=3, eval_steps=10):
     
     # Initialize wandb config
     wandb_config = {
@@ -132,6 +132,7 @@ def main(num_train_images=100, proportion_per_transform=0.2, resolution=224, bat
         "resolution": resolution,
         "batch_size": batch_size,
         "num_epochs": num_epochs,
+        "eval_steps": eval_steps,
         "warmup_steps": 500,
         "weight_decay": 0.01,
         "gpu_available": GPU_AVAILABLE,
@@ -353,8 +354,9 @@ def main(num_train_images=100, proportion_per_transform=0.2, resolution=224, bat
             weight_decay=0.01,
             logging_dir=os.path.join(env_path("LOG_DIR", "."), f"{name}"),
             logging_steps=1,
-            eval_strategy="epoch",
-            save_strategy="epoch",
+            eval_steps=eval_steps,  # Evaluate every eval_steps steps
+            save_strategy="steps",  # Save based on steps instead of epochs
+            save_steps=eval_steps,  # Save at the same frequency as evaluation
             load_best_model_at_end=True,
             metric_for_best_model="accuracy",
             save_total_limit=1,  # Only keep the best model
@@ -505,10 +507,12 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', type=int, default=128, help='Batch size for training and evaluation (default: 128)')
     parser.add_argument('--num_train_images', type=int, default=500, help='Number of training images to use per class (default: 500)')
     parser.add_argument('--num_epochs', type=int, default=3, help='Number of training epochs (default: 3)')
+    parser.add_argument('--eval_steps', type=int, default=100, help='Number of steps between evaluations (default: 100)')
     args = parser.parse_args()
     main(
         resolution=args.resolution, 
         batch_size=args.batch_size, 
         num_train_images=args.num_train_images,
-        num_epochs=args.num_epochs
+        num_epochs=args.num_epochs,
+        eval_steps=args.eval_steps
     )
