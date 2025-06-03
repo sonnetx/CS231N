@@ -20,4 +20,4 @@ pip install -r /home/groups/roxanad/eric/CS231N/requirements.txt
 export WANDB_API_KEY="7ab80eeb87ef06298c6bca1258208b1739ad32fe"
 
 # Running the script
-python src/models/model_comparison_test.py --resolution 224 --batch_size 128
+python src/models/model_comparison_test.py --resolution 224 --batch_size 128 --num_train_images 25000
