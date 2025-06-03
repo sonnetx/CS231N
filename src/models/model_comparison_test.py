@@ -123,7 +123,7 @@ class WandbCallback(TrainerCallback):
             # Log evaluation metrics
             wandb.log(metrics)
 
-def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224, batch_size=64):
+def main(num_train_images=100, proportion_per_transform=0.2, resolution=224, batch_size=256):
     
     # Initialize wandb config
     wandb_config = {
@@ -140,7 +140,6 @@ def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224, b
     models = [
         {"name": "vit", "model_id": "google/vit-base-patch16-224", "type": "vit", "config": {
             "image_size": resolution,
-            "patch_size": 16,
             "num_labels": NUM_FILTERED_CLASSES,
             "ignore_mismatched_sizes": True
         }},
@@ -316,7 +315,6 @@ def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224, b
                 num_labels=NUM_FILTERED_CLASSES,
                 ignore_mismatched_sizes=True,
                 image_size=resolution,
-                patch_size=8  # Smaller patch size
             )
         elif typ == "dinov2":
             model = AutoModelForImageClassification.from_pretrained(
@@ -351,7 +349,6 @@ def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224, b
             num_train_epochs=3,
             per_device_train_batch_size=batch_size,
             per_device_eval_batch_size=batch_size,
-            gradient_accumulation_steps=4,
             warmup_steps=500,
             weight_decay=0.01,
             logging_dir=os.path.join(env_path("LOG_DIR", "."), f"{name}"),
@@ -479,6 +476,10 @@ def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224, b
         
         # Close the wandb run for this model
         wandb.finish()
+
+        # Clear GPU memory after model is done
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     # Remove the final wandb.finish() since we're now closing each run individually
     with open(
