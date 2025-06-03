@@ -8,9 +8,6 @@ This does NOT experiment on JPEG compression levels
 # Environment Setup
 import os
 
-# Set memory optimization
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
 # Standard Libraries
 import io
 import json
@@ -58,12 +55,12 @@ from thop import profile
 
 # Local Application Imports
 from utils.constants import HF_MODELS, SSL_MODEL, SIMCLR_BACKBONE, NUM_CLASSES, FILTERED_CLASSES, NUM_FILTERED_CLASSES
-from utils.transforms_test import (
+from utils.transforms import (
     JPEGCompressionTransform,
     GaussianBlurTransform,
     ColorQuantizationTransform,
 )
-from utils.util_classes_test import (
+from utils.util_classes import (
     ISICDataset,
     SimCLRForClassification,
     LossLoggerCallback,
@@ -124,8 +121,8 @@ class WandbCallback(TrainerCallback):
 
 def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224):
     
-    # Set batch size to 128
-    batch_size = 128  # Changed from 64
+    # Simple batch size configuration
+    batch_size = 256
     
     # Initialize wandb config
     wandb_config = {
@@ -140,20 +137,9 @@ def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224):
     }
 
     models = [
-        {"name": "vit", "model_id": "google/vit-base-patch16-224", "type": "vit", "config": {
-            "image_size": resolution,
-            "patch_size": 16,
-            "num_labels": NUM_FILTERED_CLASSES,
-            "ignore_mismatched_sizes": True
-        }},
-        # {"name": "dinov2", "model_id": "facebook/dinov2-base", "type": "dinov2", "config": {
-        #     "image_size": resolution,
-        #     "num_labels": NUM_FILTERED_CLASSES,
-        #     "ignore_mismatched_sizes": True
-        # }},
-        # {"name": "simclr", "model_id": "resnet50", "type": "simclr", "config": {
-        #     "img_size": resolution
-        # }},
+        {"name": "vit", "model_id": "google/vit-base-patch16-224", "type": "vit"},
+        {"name": "dinov2", "model_id": "facebook/dinov2-base", "type": "dinov2"},
+        {"name": "simclr", "model_id": "resnet50", "type": "simclr"},
     ]
 
     results = {m["name"]: {} for m in models}
@@ -220,120 +206,107 @@ def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224):
     num_images = len(train_dataset)
     images_per_transform = int(num_images * proportion_per_transform)
 
-    # Create a single preprocessor for each model type
-    preprocessors = {}
-    for model_info in models:
-        name, model_id, typ, config = (
-            model_info["name"],
-            model_info["model_id"],
-            model_info["type"],
-            model_info["config"],
-        )
-        if typ == "vit":
-            preprocessors[typ] = ViTFeatureExtractor.from_pretrained(
-                model_id,
-                size=resolution,
-                do_resize=True,
-                resample=Image.LANCZOS,
-                do_normalize=True,
-                image_mean=[0.485, 0.456, 0.406],
-                image_std=[0.229, 0.224, 0.225]
-            )
-        elif typ == "dinov2":
-            preprocessors[typ] = AutoImageProcessor.from_pretrained(
-                model_id,
-                size=resolution,
-                do_resize=True,
-                resample=Image.LANCZOS,
-                do_normalize=True,
-                image_mean=[0.485, 0.456, 0.406],
-                image_std=[0.229, 0.224, 0.225]
-            )
-        else:
-            preprocessors[typ] = None
+    transformed_datasets = []
+    indices = np.arange(num_images)
+    np.random.shuffle(indices)
 
-    # Process each model type separately
+    used_indices = []
+    for i, transform in enumerate(degradation_transforms):
+        subset_indices = indices[i * images_per_transform:(i + 1) * images_per_transform]
+        used_indices.extend(subset_indices)
+        subset = Subset(train_dataset, subset_indices)
+        transform_compose = transforms.Compose([transform])
+        
+        for model_info in models:
+            name, model_id, typ = (
+                model_info["name"],
+                model_info["model_id"],
+                model_info["type"],
+            )
+            if typ == "vit":
+                preprocessor = ViTFeatureExtractor.from_pretrained(model_id, size=resolution)
+            elif typ == "dinov2":
+                preprocessor = AutoImageProcessor.from_pretrained(model_id, size=resolution)
+            else:
+                preprocessor = None
+
+            transformed_ds = ISICDataset(subset, preprocessor, resolution, transform_compose, typ)
+            transformed_datasets.append(transformed_ds)
+
+    remaining_indices = np.setdiff1d(indices, used_indices)
+
+    if len(remaining_indices) > 0:
+        remaining_subset = Subset(train_dataset, remaining_indices)
+        for model_info in models:
+            name, model_id, typ = (
+                model_info["name"],
+                model_info["model_id"],
+                model_info["type"],
+            )
+            if typ == "vit":
+                preprocessor = ViTFeatureExtractor.from_pretrained(model_id, size=resolution)
+            elif typ == "dinov2":
+                preprocessor = AutoImageProcessor.from_pretrained(model_id, size=resolution)
+            else:
+                preprocessor = None
+
+            # No transform applied to remaining indices
+            untransformed_ds = ISICDataset(remaining_subset, preprocessor, resolution, None, typ)
+            transformed_datasets.append(untransformed_ds)
+
+    train_ds = ConcatDataset(transformed_datasets)
+
+    val_ds = ISICDataset(
+        val_dataset,
+        preprocessor,
+        resolution,
+        model_type=typ,
+    )
+
     for model_info in models:
-        name, model_id, typ, config = (
+        name, model_id, typ = (
             model_info["name"],
             model_info["model_id"],
             model_info["type"],
-            model_info["config"],
         )
 
         # Initialize wandb for this specific model run
         wandb.init(
             entity="ericcui-use-stanford-university",
             project="CS231N Test",
-            name=f"{name}_{resolution}_finetune",
-            config={**wandb_config, "model_config": config},
-            tags=["baseline", "model-comparison", "finetune", name, f"res_{resolution}"],
+            name=f"{name}_finetune",
+            config=wandb_config,
+            tags=["baseline", "model-comparison", "finetune", name],
             reinit=True
         )
 
-        transformed_datasets = []
-        indices = np.arange(num_images)
-        np.random.shuffle(indices)
-
-        used_indices = []
-        for i, transform in enumerate(degradation_transforms):
-            subset_indices = indices[i * images_per_transform:(i + 1) * images_per_transform]
-            used_indices.extend(subset_indices)
-            subset = Subset(train_dataset, subset_indices)
-            transform_compose = transforms.Compose([transform])
-            
-            transformed_ds = ISICDataset(
-                subset, 
-                preprocessors[typ], 
-                resolution, 
-                transform_compose, 
-                typ
+        if typ == "vit":
+            preprocessor = ViTFeatureExtractor.from_pretrained(
+                model_id, size=resolution
             )
-            transformed_datasets.append(transformed_ds)
-
-        remaining_indices = np.setdiff1d(indices, used_indices)
-
-        if len(remaining_indices) > 0:
-            remaining_subset = Subset(train_dataset, remaining_indices)
-            untransformed_ds = ISICDataset(
-                remaining_subset, 
-                preprocessors[typ], 
-                resolution, 
-                None, 
-                typ
-            )
-            transformed_datasets.append(untransformed_ds)
-
-        train_ds = ConcatDataset(transformed_datasets)
-        val_ds = ISICDataset(
-            val_dataset,
-            preprocessors[typ],
-            resolution,
-            model_type=typ,
-        )
+        elif typ == "dinov2":
+            preprocessor = AutoImageProcessor.from_pretrained(model_id, size=resolution)
+        else:
+            preprocessor = None
 
         if typ == "vit":
             model = ViTForImageClassification.from_pretrained(
-                model_id,
-                num_labels=NUM_FILTERED_CLASSES,
-                ignore_mismatched_sizes=True,
-                image_size=resolution,
-                patch_size=8  # Smaller patch size
+                model_id, num_labels=NUM_FILTERED_CLASSES, ignore_mismatched_sizes=True
             )
         elif typ == "dinov2":
             model = AutoModelForImageClassification.from_pretrained(
-                model_id,
-                num_labels=NUM_FILTERED_CLASSES,
-                ignore_mismatched_sizes=True,
-                image_size=resolution
+                model_id, num_labels=NUM_FILTERED_CLASSES, ignore_mismatched_sizes=True
             )
         elif typ == SSL_MODEL:
+            # Load pretrained ResNet50 backbone
             backbone = timm.create_model(
                 SIMCLR_BACKBONE,
                 pretrained=True,
                 num_classes=0  # Remove classification head
             )
+            # Create SimCLR model with the backbone
             model = SimCLRForClassification(backbone, NUM_FILTERED_CLASSES)
+            # Freeze the backbone initially
             freeze_backbone(model, SSL_MODEL)
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -450,7 +423,7 @@ def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224):
 
         if typ in HF_MODELS:
             model.save_pretrained(model_dir)
-            preprocessors[typ].save_pretrained(model_dir)
+            preprocessor.save_pretrained(model_dir)
         elif typ == SSL_MODEL:
             torch.save(
                 model.state_dict(), os.path.join(model_dir, "pytorch_model.bin")
