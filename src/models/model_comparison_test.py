@@ -123,7 +123,7 @@ class WandbCallback(TrainerCallback):
             # Log evaluation metrics
             wandb.log(metrics)
 
-def main(num_train_images=100, proportion_per_transform=0.2, resolution=224, batch_size=256, num_epochs=3):
+def main(num_train_images=100, proportion_per_transform=0.2, resolution=224, batch_size=512, num_epochs=3):
     
     # Initialize wandb config
     wandb_config = {
@@ -143,14 +143,14 @@ def main(num_train_images=100, proportion_per_transform=0.2, resolution=224, bat
             "num_labels": NUM_FILTERED_CLASSES,
             "ignore_mismatched_sizes": True
         }},
-        {"name": "dinov2", "model_id": "facebook/dinov2-base", "type": "dinov2", "config": {
-            "image_size": resolution,
-            "num_labels": NUM_FILTERED_CLASSES,
-            "ignore_mismatched_sizes": True
-        }},
-        {"name": "simclr", "model_id": "resnet50", "type": "simclr", "config": {
-            "img_size": resolution
-        }},
+        # {"name": "dinov2", "model_id": "facebook/dinov2-base", "type": "dinov2", "config": {
+        #     "image_size": resolution,
+        #     "num_labels": NUM_FILTERED_CLASSES,
+        #     "ignore_mismatched_sizes": True
+        # }},
+        # {"name": "simclr", "model_id": "resnet50", "type": "simclr", "config": {
+        #     "img_size": resolution
+        # }},
     ]
 
     results = {m["name"]: {} for m in models}
