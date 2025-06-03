@@ -123,7 +123,7 @@ class WandbCallback(TrainerCallback):
             # Log evaluation metrics
             wandb.log(metrics)
 
-def main(num_train_images=100, proportion_per_transform=0.2, resolution=224, batch_size=256):
+def main(num_train_images=100, proportion_per_transform=0.2, resolution=224, batch_size=256, num_epochs=3):
     
     # Initialize wandb config
     wandb_config = {
@@ -131,7 +131,7 @@ def main(num_train_images=100, proportion_per_transform=0.2, resolution=224, bat
         "proportion_per_transform": proportion_per_transform,
         "resolution": resolution,
         "batch_size": batch_size,
-        "num_epochs": 3,
+        "num_epochs": num_epochs,
         "warmup_steps": 500,
         "weight_decay": 0.01,
         "gpu_available": GPU_AVAILABLE,
@@ -346,7 +346,7 @@ def main(num_train_images=100, proportion_per_transform=0.2, resolution=224, bat
 
         train_args = TrainingArguments(
             output_dir=os.path.join(env_path("TRAIN_OUTPUT_DIR", "."), f"{name}"),
-            num_train_epochs=3,
+            num_train_epochs=num_epochs,
             per_device_train_batch_size=batch_size,
             per_device_eval_batch_size=batch_size,
             warmup_steps=500,
@@ -503,6 +503,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Model comparison script for image classification.")
     parser.add_argument('--resolution', type=int, default=224, help='Input image resolution (default: 224)')
     parser.add_argument('--batch_size', type=int, default=128, help='Batch size for training and evaluation (default: 128)')
-    parser.add_argument('--num_train_images', type=int, default=500, help='Number of training images to use per class (default: 25000)')
+    parser.add_argument('--num_train_images', type=int, default=500, help='Number of training images to use per class (default: 500)')
+    parser.add_argument('--num_epochs', type=int, default=3, help='Number of training epochs (default: 3)')
     args = parser.parse_args()
-    main(resolution=args.resolution, batch_size=args.batch_size, num_train_images=args.num_train_images)
+    main(
+        resolution=args.resolution, 
+        batch_size=args.batch_size, 
+        num_train_images=args.num_train_images,
+        num_epochs=args.num_epochs
+    )
