@@ -354,6 +354,7 @@ def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224, b
             num_train_epochs=3,
             per_device_train_batch_size=batch_size,
             per_device_eval_batch_size=batch_size,
+            gradient_accumulation_steps=4,
             warmup_steps=500,
             weight_decay=0.01,
             logging_dir=os.path.join(env_path("LOG_DIR", "."), f"{name}"),
