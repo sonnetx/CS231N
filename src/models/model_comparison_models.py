@@ -359,7 +359,7 @@ def main(num_train_images=100, proportion_per_transform=0.2, resolution=224, bat
             eval_steps=eval_steps,
             save_strategy="steps",
             save_steps=eval_steps,
-            load_best_model_at_end=True,
+            load_best_model_at_end=False,
             metric_for_best_model="accuracy",
             save_total_limit=1,
             save_safetensors=False,
