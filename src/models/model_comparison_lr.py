@@ -123,7 +123,7 @@ class WandbCallback(TrainerCallback):
             # Log evaluation metrics
             wandb.log(metrics)
 
-def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224, batch_size=256, num_epochs=3, eval_steps=10):
+def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224, batch_size=256, num_epochs=3, eval_steps=10, learning_rate=1e-4):
     
     # Define the model to use for learning rate experiments
     model_config = {
@@ -139,9 +139,7 @@ def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224, b
     
     # Define learning rates to test
     learning_rates = [
-        1e-4,    # Standard
-        5e-4,    # Aggressive
-        1e-3     # Very aggressive
+        learning_rate
     ]
     
     # Initialize results dictionary
@@ -533,12 +531,14 @@ if __name__ == "__main__":
     parser.add_argument('--num_train_images', type=int, default=500, help='Number of training images to use per class (default: 500)')
     parser.add_argument('--num_epochs', type=int, default=3, help='Number of training epochs (default: 3)')
     parser.add_argument('--eval_steps', type=int, default=100, help='Number of steps between evaluations (default: 100)')
+    parser.add_argument('--learning_rate', type=float, default=1e-4, help='Learning rate (default: 1e-4)')
     args = parser.parse_args()
     main(
         resolution=args.resolution, 
         batch_size=args.batch_size, 
         num_train_images=args.num_train_images,
         num_epochs=args.num_epochs,
-        eval_steps=args.eval_steps
+        eval_steps=args.eval_steps,
+        learning_rate=args.learning_rate
     )
 
