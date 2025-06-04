@@ -325,6 +325,18 @@ def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224, b
             print(f"FLOP profiling failed: {e}")
             flops = -1
 
+        # Monitor disk space before training
+        import shutil
+        total, used, free = shutil.disk_usage("/")
+        print(f"Disk space before training {name}:")
+        print(f"Total: {total // (2**30)} GB")
+        print(f"Used: {used // (2**30)} GB")
+        print(f"Free: {free // (2**30)} GB")
+        
+        # If less than 1GB free, raise an error
+        if free < 1 * (2**30):  # 1GB in bytes
+            raise RuntimeError("Not enough disk space to train model. Please free up at least 1GB of space.")
+
         train_args = TrainingArguments(
             output_dir=os.path.join(env_path("TRAIN_OUTPUT_DIR", "."), f"{name}_lr_{learning_rate}"),
             num_train_epochs=num_epochs,
@@ -362,18 +374,24 @@ def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224, b
                 import shutil
                 shutil.rmtree(dir_path)
                 os.makedirs(dir_path, exist_ok=True)
-
-        # Monitor disk space before training
-        import shutil
-        total, used, free = shutil.disk_usage("/")
-        print(f"Disk space before training {name}:")
-        print(f"Total: {total // (2**30)} GB")
-        print(f"Used: {used // (2**30)} GB")
-        print(f"Free: {free // (2**30)} GB")
         
-        # If less than 1GB free, raise an error
-        if free < 1 * (2**30):  # 1GB in bytes
-            raise RuntimeError("Not enough disk space to train model. Please free up at least 1GB of space.")
+        # Initialize wandb for this learning rate
+        wandb.init(
+            entity="ericcui-use-stanford-university",
+            project="CS231N Test",
+            name=f"{name}_lr_{learning_rate}",
+            config={
+                "model_name": name,
+                "resolution": resolution,
+                "batch_size": batch_size,
+                "num_epochs": num_epochs,
+                "eval_steps": eval_steps,
+                "learning_rate": learning_rate,
+                "weight_decay": 0.01,
+                "gpu_available": GPU_AVAILABLE,
+            },
+            tags=["learning_rate_experiment", f"lr_{learning_rate}", f"resolution_{resolution}"],
+        )
         
         trainer = Trainer(
             model=model,
