@@ -379,7 +379,7 @@ def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224, b
         wandb.init(
             entity="ericcui-use-stanford-university",
             project="CS231N Test",
-            name=f"{name}_lr_{learning_rate}",
+            name=f"{name}_{resolution}_lr_{learning_rate}",
             config={
                 "model_name": name,
                 "resolution": resolution,
