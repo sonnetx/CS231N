@@ -443,9 +443,9 @@ def main(num_train_images=100, proportion_per_transform=0.2, resolution=224, bat
         }
         wandb.log(model_metrics)
 
-        model_dir = os.path.join(
-            env_path("MODEL_DIR", "."), f"{name}"
-        )
+        # Create parameterized directory path
+        dir_name = f"{name}_{typ}_lr{learning_rate}_bs{batch_size}"
+        model_dir = os.path.join(env_path("MODEL_DIR", "."), dir_name)
         os.makedirs(model_dir, exist_ok=True)
 
         if typ in HF_MODELS:
@@ -467,7 +467,7 @@ def main(num_train_images=100, proportion_per_transform=0.2, resolution=224, bat
 
         # Save model as wandb artifact
         artifact = wandb.Artifact(
-            name=f"{name}_model",
+            name=f"{dir_name}_model",
             type="model",
             description=f"Trained {name} model with {typ} architecture"
         )
@@ -488,7 +488,7 @@ def main(num_train_images=100, proportion_per_transform=0.2, resolution=224, bat
     # Remove the final wandb.finish() since we're now closing each run individually
     with open(
         os.path.join(
-            env_path("TRAIN_OUTPUT_DIR", "."), "results_metrics_finetune.json"
+            env_path("TRAIN_OUTPUT_DIR", "."), f"results_metrics_finetune_{dir_name}.json"
         ),
         "w",
     ) as f:
@@ -496,7 +496,7 @@ def main(num_train_images=100, proportion_per_transform=0.2, resolution=224, bat
 
     with open(
         os.path.join(
-            env_path("TRAIN_OUTPUT_DIR", "."), "results_metrics_linear_probe.json"
+            env_path("TRAIN_OUTPUT_DIR", "."), f"results_metrics_linear_probe_{dir_name}.json"
         ),
         "w",
     ) as f:
