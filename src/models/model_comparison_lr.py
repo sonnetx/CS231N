@@ -8,11 +8,15 @@ This does NOT experiment on JPEG compression levels
 # Environment Setup
 import os
 
+# Set memory optimization
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 # Standard Libraries
 import io
 import json
 import random
 import time
+import argparse
 
 # Scientific & Visualization Libraries
 import numpy as np
@@ -55,12 +59,12 @@ from thop import profile
 
 # Local Application Imports
 from utils.constants import HF_MODELS, SSL_MODEL, SIMCLR_BACKBONE, NUM_CLASSES, FILTERED_CLASSES, NUM_FILTERED_CLASSES
-from utils.transforms import (
+from utils.transforms_test import (
     JPEGCompressionTransform,
     GaussianBlurTransform,
     ColorQuantizationTransform,
 )
-from utils.util_classes import (
+from utils.util_classes_test import (
     ISICDataset,
     SimCLRForClassification,
     LossLoggerCallback,
@@ -119,31 +123,46 @@ class WandbCallback(TrainerCallback):
             # Log evaluation metrics
             wandb.log(metrics)
 
-def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224):
+def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224, batch_size=256, num_epochs=3, eval_steps=10):
     
-    # Simple batch size configuration
-    batch_size = 256
-    
-    # Initialize wandb config
-    wandb_config = {
-        "num_train_images": num_train_images,
-        "proportion_per_transform": proportion_per_transform,
-        "resolution": resolution,
-        "batch_size": batch_size,
-        "num_epochs": 3,
-        "warmup_steps": 500,
-        "weight_decay": 0.01,
-        "gpu_available": GPU_AVAILABLE,
+    # Define the model to use for learning rate experiments
+    model_config = {
+        "name": "vit",
+        "model_id": "google/vit-base-patch16-224",
+        "type": "vit",
+        "config": {
+            "image_size": resolution,
+            "num_labels": NUM_FILTERED_CLASSES,
+            "ignore_mismatched_sizes": True
+        }
     }
-
-    models = [
-        {"name": "vit", "model_id": "google/vit-base-patch16-224", "type": "vit"},
-        {"name": "dinov2", "model_id": "facebook/dinov2-base", "type": "dinov2"},
-        {"name": "simclr", "model_id": "resnet50", "type": "simclr"},
+    
+    # Define learning rates to test
+    learning_rates = [
+        1e-4,    # Standard
+        5e-4,    # Aggressive
+        1e-3     # Very aggressive
     ]
-
-    results = {m["name"]: {} for m in models}
-    results_linear_probe = {m["name"]: {} for m in models}
+    
+    # Initialize results dictionary
+    results = {str(lr): {} for lr in learning_rates}
+    
+    # Initialize wandb for the overall experiment
+    wandb.init(
+        entity="ericcui-use-stanford-university",
+        project="CS231N Test",
+        name=f"lr_experiment_{model_config['name']}_{resolution}",
+        config={
+            "model_name": model_config["name"],
+            "resolution": resolution,
+            "batch_size": batch_size,
+            "num_epochs": num_epochs,
+            "eval_steps": eval_steps,
+            "weight_decay": 0.01,
+            "gpu_available": GPU_AVAILABLE,
+        },
+        tags=["learning-rate-experiment", model_config["name"], f"res_{resolution}"],
+    )
 
     dataset = load_dataset(
         "MKZuziak/ISIC_2019_224",
@@ -206,107 +225,130 @@ def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224):
     num_images = len(train_dataset)
     images_per_transform = int(num_images * proportion_per_transform)
 
-    transformed_datasets = []
-    indices = np.arange(num_images)
-    np.random.shuffle(indices)
-
-    used_indices = []
-    for i, transform in enumerate(degradation_transforms):
-        subset_indices = indices[i * images_per_transform:(i + 1) * images_per_transform]
-        used_indices.extend(subset_indices)
-        subset = Subset(train_dataset, subset_indices)
-        transform_compose = transforms.Compose([transform])
-        
-        for model_info in models:
-            name, model_id, typ = (
-                model_info["name"],
-                model_info["model_id"],
-                model_info["type"],
-            )
-            if typ == "vit":
-                preprocessor = ViTFeatureExtractor.from_pretrained(model_id, size=resolution)
-            elif typ == "dinov2":
-                preprocessor = AutoImageProcessor.from_pretrained(model_id, size=resolution)
-            else:
-                preprocessor = None
-
-            transformed_ds = ISICDataset(subset, preprocessor, resolution, transform_compose, typ)
-            transformed_datasets.append(transformed_ds)
-
-    remaining_indices = np.setdiff1d(indices, used_indices)
-
-    if len(remaining_indices) > 0:
-        remaining_subset = Subset(train_dataset, remaining_indices)
-        for model_info in models:
-            name, model_id, typ = (
-                model_info["name"],
-                model_info["model_id"],
-                model_info["type"],
-            )
-            if typ == "vit":
-                preprocessor = ViTFeatureExtractor.from_pretrained(model_id, size=resolution)
-            elif typ == "dinov2":
-                preprocessor = AutoImageProcessor.from_pretrained(model_id, size=resolution)
-            else:
-                preprocessor = None
-
-            # No transform applied to remaining indices
-            untransformed_ds = ISICDataset(remaining_subset, preprocessor, resolution, None, typ)
-            transformed_datasets.append(untransformed_ds)
-
-    train_ds = ConcatDataset(transformed_datasets)
-
-    val_ds = ISICDataset(
-        val_dataset,
-        preprocessor,
-        resolution,
-        model_type=typ,
-    )
-
-    for model_info in models:
-        name, model_id, typ = (
+    # Create a single preprocessor for each model type
+    preprocessors = {}
+    for model_info in [model_config]:
+        name, model_id, typ, config = (
             model_info["name"],
             model_info["model_id"],
             model_info["type"],
+            model_info["config"],
         )
+        if typ == "vit":
+            preprocessors[typ] = ViTFeatureExtractor.from_pretrained(
+                model_id,
+                size=resolution,
+                do_resize=True,
+                resample=Image.LANCZOS,
+                do_normalize=True,
+                image_mean=[0.485, 0.456, 0.406],
+                image_std=[0.229, 0.224, 0.225]
+            )
+        elif typ == "dinov2":
+            preprocessors[typ] = AutoImageProcessor.from_pretrained(
+                model_id,
+                size=resolution,
+                do_resize=True,
+                resample=Image.LANCZOS,
+                do_normalize=True,
+                image_mean=[0.485, 0.456, 0.406],
+                image_std=[0.229, 0.224, 0.225]
+            )
+        else:
+            preprocessors[typ] = None
 
-        # Initialize wandb for this specific model run
+    # Process each learning rate
+    for learning_rate in learning_rates:
+        print(f"\nTraining with learning rate: {learning_rate}")
+        
+        # Initialize wandb for this specific learning rate run
         wandb.init(
             entity="ericcui-use-stanford-university",
             project="CS231N Test",
-            name=f"{name}_finetune",
-            config=wandb_config,
-            tags=["baseline", "model-comparison", "finetune", name],
+            name=f"{model_config['name']}_{resolution}_lr_{learning_rate}",
+            config={
+                "model_name": model_config["name"],
+                "resolution": resolution,
+                "batch_size": batch_size,
+                "num_epochs": num_epochs,
+                "eval_steps": eval_steps,
+                "learning_rate": learning_rate,
+                "weight_decay": 0.01,
+                "gpu_available": GPU_AVAILABLE,
+            },
+            tags=["learning-rate-experiment", model_config["name"], f"res_{resolution}", f"lr_{learning_rate}"],
             reinit=True
         )
 
-        if typ == "vit":
-            preprocessor = ViTFeatureExtractor.from_pretrained(
-                model_id, size=resolution
+        name, model_id, typ, config = (
+            model_config["name"],
+            model_config["model_id"],
+            model_config["type"],
+            model_config["config"],
+        )
+
+        transformed_datasets = []
+        indices = np.arange(num_images)
+        np.random.shuffle(indices)
+
+        used_indices = []
+        for i, transform in enumerate(degradation_transforms):
+            subset_indices = indices[i * images_per_transform:(i + 1) * images_per_transform]
+            used_indices.extend(subset_indices)
+            subset = Subset(train_dataset, subset_indices)
+            transform_compose = transforms.Compose([transform])
+            
+            transformed_ds = ISICDataset(
+                subset, 
+                preprocessors[typ], 
+                resolution, 
+                transform_compose, 
+                typ
             )
-        elif typ == "dinov2":
-            preprocessor = AutoImageProcessor.from_pretrained(model_id, size=resolution)
-        else:
-            preprocessor = None
+            transformed_datasets.append(transformed_ds)
+
+        remaining_indices = np.setdiff1d(indices, used_indices)
+
+        if len(remaining_indices) > 0:
+            remaining_subset = Subset(train_dataset, remaining_indices)
+            untransformed_ds = ISICDataset(
+                remaining_subset, 
+                preprocessors[typ], 
+                resolution, 
+                None, 
+                typ
+            )
+            transformed_datasets.append(untransformed_ds)
+
+        train_ds = ConcatDataset(transformed_datasets)
+        val_ds = ISICDataset(
+            val_dataset,
+            preprocessors[typ],
+            resolution,
+            model_type=typ,
+        )
 
         if typ == "vit":
             model = ViTForImageClassification.from_pretrained(
-                model_id, num_labels=NUM_FILTERED_CLASSES, ignore_mismatched_sizes=True
+                model_id,
+                num_labels=NUM_FILTERED_CLASSES,
+                ignore_mismatched_sizes=True,
+                image_size=resolution,
             )
         elif typ == "dinov2":
             model = AutoModelForImageClassification.from_pretrained(
-                model_id, num_labels=NUM_FILTERED_CLASSES, ignore_mismatched_sizes=True
+                model_id,
+                num_labels=NUM_FILTERED_CLASSES,
+                ignore_mismatched_sizes=True,
+                image_size=resolution
             )
         elif typ == SSL_MODEL:
-            # Load pretrained ResNet50 backbone
             backbone = timm.create_model(
                 SIMCLR_BACKBONE,
                 pretrained=True,
                 num_classes=0  # Remove classification head
             )
-            # Create SimCLR model with the backbone
             model = SimCLRForClassification(backbone, NUM_FILTERED_CLASSES)
-            # Freeze the backbone initially
             freeze_backbone(model, SSL_MODEL)
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -322,31 +364,34 @@ def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224):
             flops = -1
 
         train_args = TrainingArguments(
-            output_dir=os.path.join(env_path("TRAIN_OUTPUT_DIR", "."), f"{name}"),
-            num_train_epochs=3,
+            output_dir=os.path.join(env_path("TRAIN_OUTPUT_DIR", "."), f"{name}_lr_{learning_rate}"),
+            num_train_epochs=num_epochs,
             per_device_train_batch_size=batch_size,
             per_device_eval_batch_size=batch_size,
-            warmup_steps=500,
+            learning_rate=learning_rate,
+            lr_scheduler_type="cosine",
             weight_decay=0.01,
-            logging_dir=os.path.join(env_path("LOG_DIR", "."), f"{name}"),
+            logging_dir=os.path.join(env_path("LOG_DIR", "."), f"{name}_lr_{learning_rate}"),
             logging_steps=1,
-            eval_strategy="epoch",
-            save_strategy="epoch",
+            eval_strategy="steps",
+            eval_steps=eval_steps,
+            save_strategy="steps",
+            save_steps=eval_steps,
             load_best_model_at_end=True,
             metric_for_best_model="accuracy",
-            save_total_limit=1,  # Only keep the best model
-            save_safetensors=False,  # Use PyTorch format instead of safetensors
-            hub_model_id=None,  # Don't push to hub
-            hub_strategy="end",  # Only push at the end if needed
-            push_to_hub=False,  # Don't push to hub
-            save_only_model=True,  # Don't save optimizer state
+            save_total_limit=1,
+            save_safetensors=False,
+            hub_model_id=None,
+            hub_strategy="end",
+            push_to_hub=False,
+            save_only_model=True,
         )
         
         # Clean up old model directories before training
         model_dirs = [
-            os.path.join(env_path("TRAIN_OUTPUT_DIR", "."), f"{name}"),
-            os.path.join(env_path("MODEL_DIR", "."), f"{name}"),
-            os.path.join(env_path("LOG_DIR", "."), f"{name}"),
+            os.path.join(env_path("TRAIN_OUTPUT_DIR", "."), f"{name}_lr_{learning_rate}"),
+            os.path.join(env_path("MODEL_DIR", "."), f"{name}_lr_{learning_rate}"),
+            os.path.join(env_path("LOG_DIR", "."), f"{name}_lr_{learning_rate}"),
         ]
         
         for dir_path in model_dirs:
@@ -417,13 +462,13 @@ def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224):
         wandb.log(model_metrics)
 
         model_dir = os.path.join(
-            env_path("MODEL_DIR", "."), f"{name}"
+            env_path("MODEL_DIR", "."), f"{name}_lr_{learning_rate}"
         )
         os.makedirs(model_dir, exist_ok=True)
 
         if typ in HF_MODELS:
             model.save_pretrained(model_dir)
-            preprocessor.save_pretrained(model_dir)
+            preprocessors[typ].save_pretrained(model_dir)
         elif typ == SSL_MODEL:
             torch.save(
                 model.state_dict(), os.path.join(model_dir, "pytorch_model.bin")
@@ -440,37 +485,60 @@ def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224):
 
         # Save model as wandb artifact
         artifact = wandb.Artifact(
-            name=f"{name}_model",
+            name=f"{name}_lr_{learning_rate}_model",
             type="model",
             description=f"Trained {name} model with {typ} architecture"
         )
         artifact.add_dir(model_dir)
         wandb.log_artifact(artifact)
 
-        results[name] = model_metrics
+        # Update results dictionary
+        results[str(learning_rate)] = {
+            "learning_rate": learning_rate,
+            "model_name": name,
+            "model_type": typ,
+            "peak_memory_mb": peak_memory,
+            "flops_giga": flops,
+            "train_time_seconds": train_time,
+            "eval_time_seconds": eval_time,
+            "eval_metrics": eval_results,
+        }
 
-        print(f"[Finetune] {name}: {results[name]}")
+        print(f"[Finetune] Learning Rate {learning_rate}: {results[str(learning_rate)]}")
         
-        # Close the wandb run for this model
+        # Close the wandb run for this learning rate
         wandb.finish()
 
-    # Remove the final wandb.finish() since we're now closing each run individually
+        # Clear GPU memory after model is done
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    # Close the main wandb run
+    wandb.finish()
+
+    # Save results
     with open(
         os.path.join(
-            env_path("TRAIN_OUTPUT_DIR", "."), "results_metrics_finetune.json"
+            env_path("TRAIN_OUTPUT_DIR", "."), "results_metrics_lr_experiment.json"
         ),
         "w",
     ) as f:
         json.dump(results, f, indent=4)
 
-    with open(
-        os.path.join(
-            env_path("TRAIN_OUTPUT_DIR", "."), "results_metrics_linear_probe.json"
-        ),
-        "w",
-    ) as f:
-        json.dump(results_linear_probe, f, indent=4)
-
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Learning rate experiment for image classification.")
+    parser.add_argument('--resolution', type=int, default=224, help='Input image resolution (default: 224)')
+    parser.add_argument('--batch_size', type=int, default=128, help='Batch size for training and evaluation (default: 128)')
+    parser.add_argument('--num_train_images', type=int, default=500, help='Number of training images to use per class (default: 500)')
+    parser.add_argument('--num_epochs', type=int, default=3, help='Number of training epochs (default: 3)')
+    parser.add_argument('--eval_steps', type=int, default=100, help='Number of steps between evaluations (default: 100)')
+    args = parser.parse_args()
+    main(
+        resolution=args.resolution, 
+        batch_size=args.batch_size, 
+        num_train_images=args.num_train_images,
+        num_epochs=args.num_epochs,
+        eval_steps=args.eval_steps
+    )
+
