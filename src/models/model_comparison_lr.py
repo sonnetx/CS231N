@@ -145,23 +145,6 @@ def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224, b
     # Initialize results dictionary
     results = {str(lr): {} for lr in learning_rates}
     
-    # Initialize wandb for the overall experiment
-    wandb.init(
-        entity="ericcui-use-stanford-university",
-        project="CS231N Test",
-        name=f"lr_experiment_{model_config['name']}_{resolution}",
-        config={
-            "model_name": model_config["name"],
-            "resolution": resolution,
-            "batch_size": batch_size,
-            "num_epochs": num_epochs,
-            "eval_steps": eval_steps,
-            "weight_decay": 0.01,
-            "gpu_available": GPU_AVAILABLE,
-        },
-        tags=["learning-rate-experiment", model_config["name"], f"res_{resolution}"],
-    )
-
     dataset = load_dataset(
         "MKZuziak/ISIC_2019_224",
         cache_dir=os.environ["HF_DATASETS_CACHE"],
@@ -259,25 +242,6 @@ def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224, b
     for learning_rate in learning_rates:
         print(f"\nTraining with learning rate: {learning_rate}")
         
-        # Initialize wandb for this specific learning rate run
-        wandb.init(
-            entity="ericcui-use-stanford-university",
-            project="CS231N Test",
-            name=f"{model_config['name']}_{resolution}_lr_{learning_rate}",
-            config={
-                "model_name": model_config["name"],
-                "resolution": resolution,
-                "batch_size": batch_size,
-                "num_epochs": num_epochs,
-                "eval_steps": eval_steps,
-                "learning_rate": learning_rate,
-                "weight_decay": 0.01,
-                "gpu_available": GPU_AVAILABLE,
-            },
-            tags=["learning-rate-experiment", model_config["name"], f"res_{resolution}", f"lr_{learning_rate}"],
-            reinit=True
-        )
-
         name, model_id, typ, config = (
             model_config["name"],
             model_config["model_id"],
@@ -375,7 +339,7 @@ def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224, b
             eval_steps=eval_steps,
             save_strategy="steps",
             save_steps=eval_steps,
-            load_best_model_at_end=True,
+            load_best_model_at_end=False,
             metric_for_best_model="accuracy",
             save_total_limit=1,
             save_safetensors=False,
@@ -510,9 +474,6 @@ def main(num_train_images=25000, proportion_per_transform=0.2, resolution=224, b
         # Clear GPU memory after model is done
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-
-    # Close the main wandb run
-    wandb.finish()
 
     # Save results
     with open(
