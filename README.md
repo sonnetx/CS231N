@@ -70,10 +70,8 @@ CS231N/
    python train_models.py
    ```
 
-3. Run evaluation:
-   ```bash
-   python evaluate_isic_results.py
-   ```
+3. View results
+   We use weights and biases for logging, so output plots can be seen there
 
 ## 📦 Dataset
 
